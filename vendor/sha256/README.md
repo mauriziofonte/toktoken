@@ -2,7 +2,7 @@
 
 - **Version:** 1.0.0
 - **Source:** Original implementation for the TokToken project
-- **License:** Same as TokToken project (MIT)
+- **License:** Same as TokToken project (AGPL-3.0)
 - **Created:** 2026-03-11
 
 ## Files

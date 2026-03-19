@@ -371,6 +371,8 @@ Configuration files (optional):
 
 ## License
 
-[MIT](LICENSE) -- Copyright (c) 2026 Maurizio Fonte
+[AGPL-3.0](LICENSE) -- Copyright (c) 2026 Maurizio Fonte
+
+Commercial use without AGPL-3.0 copyleft obligations requires a separate license. Contact: <fonte.maurizio@gmail.com>
 
 See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for vendored dependency licenses.

@@ -192,4 +192,4 @@ Before submitting changes:
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the same license as the project.
+By contributing, you agree that your contributions will be licensed under the AGPL-3.0, the same license as the project.

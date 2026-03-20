@@ -214,12 +214,16 @@ TT_TEST(test_int_search_symbols_compact)
 
     if (cJSON_GetArraySize(results) > 0) {
         cJSON *first = cJSON_GetArrayItem(results, 0);
-        /* Compact mode: id and l always present, no name/kind/file */
+        /* Compact mode: id, name, kind, file, line, byte_length */
         TT_ASSERT_NOT_NULL(cJSON_GetObjectItem(first, "id"));
-        TT_ASSERT_NOT_NULL(cJSON_GetObjectItem(first, "l"));
-        TT_ASSERT(cJSON_GetObjectItem(first, "name") == NULL, "compact should not have name");
-        TT_ASSERT(cJSON_GetObjectItem(first, "kind") == NULL, "compact should not have kind");
-        TT_ASSERT(cJSON_GetObjectItem(first, "file") == NULL, "compact should not have file");
+        TT_ASSERT_NOT_NULL(cJSON_GetObjectItem(first, "name"));
+        TT_ASSERT_NOT_NULL(cJSON_GetObjectItem(first, "kind"));
+        TT_ASSERT_NOT_NULL(cJSON_GetObjectItem(first, "file"));
+        TT_ASSERT_NOT_NULL(cJSON_GetObjectItem(first, "line"));
+        /* compact should NOT have qname, sig, summary */
+        TT_ASSERT(cJSON_GetObjectItem(first, "qname") == NULL, "compact should not have qname");
+        TT_ASSERT(cJSON_GetObjectItem(first, "sig") == NULL, "compact should not have sig");
+        TT_ASSERT(cJSON_GetObjectItem(first, "summary") == NULL, "compact should not have summary");
     }
 
     cJSON_Delete(result);

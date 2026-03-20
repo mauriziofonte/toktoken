@@ -279,6 +279,80 @@ TT_TEST(test_savings_track_null_guards)
     cJSON_Delete(result);
 }
 
+/* ---- tt_savings_get_per_tool ---- */
+
+TT_TEST(test_per_tool_breakdown)
+{
+    tt_database_t db;
+    TT_ASSERT_EQ_INT(open_test_db(&db, "test_per_tool"), 0);
+
+    /* Record calls from different tools */
+    tt_savings_record_t r1 = tt_savings_calculate("search_symbols", 8000, 1000);
+    tt_savings_record(&db, &r1);
+
+    tt_savings_record_t r2 = tt_savings_calculate("inspect_bundle", 20000, 3000);
+    tt_savings_record(&db, &r2);
+
+    /* Record a second call to search_symbols */
+    tt_savings_record_t r3 = tt_savings_calculate("search_symbols", 6000, 800);
+    tt_savings_record(&db, &r3);
+
+    tt_savings_per_tool_t *items = NULL;
+    int count = 0;
+    int rc = tt_savings_get_per_tool(&db, &items, &count);
+    TT_ASSERT_EQ_INT(rc, 0);
+    TT_ASSERT_EQ_INT(count, 2);
+
+    /* Sorted by tokens_saved DESC: inspect_bundle should be first */
+    TT_ASSERT_EQ_STR(items[0].tool_name, "inspect_bundle");
+    TT_ASSERT_TRUE(items[0].call_count == 1);
+    TT_ASSERT_TRUE(items[0].tokens_saved == r2.tokens_saved);
+
+    /* search_symbols second, with accumulated values */
+    TT_ASSERT_EQ_STR(items[1].tool_name, "search_symbols");
+    TT_ASSERT_TRUE(items[1].call_count == 2);
+    TT_ASSERT_TRUE(items[1].raw_bytes == 14000);
+    TT_ASSERT_TRUE(items[1].tokens_saved == r1.tokens_saved + r3.tokens_saved);
+
+    tt_savings_free_per_tool(items, count);
+    tt_database_close(&db);
+}
+
+TT_TEST(test_per_tool_empty)
+{
+    tt_database_t db;
+    TT_ASSERT_EQ_INT(open_test_db(&db, "test_per_tool_empty"), 0);
+
+    tt_savings_per_tool_t *items = NULL;
+    int count = 0;
+    int rc = tt_savings_get_per_tool(&db, &items, &count);
+    TT_ASSERT_EQ_INT(rc, 0);
+    TT_ASSERT_EQ_INT(count, 0);
+    TT_ASSERT_NULL(items);
+
+    tt_database_close(&db);
+}
+
+TT_TEST(test_reset_clears_per_tool)
+{
+    tt_database_t db;
+    TT_ASSERT_EQ_INT(open_test_db(&db, "test_reset_pt"), 0);
+
+    tt_savings_record_t rec = tt_savings_calculate("tool_a", 5000, 500);
+    tt_savings_record(&db, &rec);
+
+    int rc = tt_savings_reset(&db);
+    TT_ASSERT_EQ_INT(rc, 0);
+
+    tt_savings_per_tool_t *items = NULL;
+    int count = 0;
+    rc = tt_savings_get_per_tool(&db, &items, &count);
+    TT_ASSERT_EQ_INT(rc, 0);
+    TT_ASSERT_EQ_INT(count, 0);
+
+    tt_database_close(&db);
+}
+
 /* ---- tt_savings_raw_from_index ---- */
 
 TT_TEST(test_raw_from_index)
@@ -333,6 +407,10 @@ void run_int_savings_tests(void)
     TT_RUN(test_savings_track_records_to_db);
     TT_RUN(test_savings_track_no_savings_when_response_larger);
     TT_RUN(test_savings_track_null_guards);
+
+    TT_RUN(test_per_tool_breakdown);
+    TT_RUN(test_per_tool_empty);
+    TT_RUN(test_reset_clears_per_tool);
 
     TT_RUN(test_raw_from_index);
 

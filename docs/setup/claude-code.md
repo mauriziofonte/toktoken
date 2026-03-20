@@ -79,7 +79,11 @@ Add these entries to the `permissions.allow` array:
             "mcp__toktoken__cache_clear",
             "mcp__toktoken__find_importers",
             "mcp__toktoken__find_references",
-            "mcp__toktoken__find_callers"
+            "mcp__toktoken__find_callers",
+            "mcp__toktoken__inspect_blast_radius",
+            "mcp__toktoken__inspect_cycles",
+            "mcp__toktoken__find_dead",
+            "mcp__toktoken__index_file"
         ]
     }
 }

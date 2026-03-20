@@ -3,10 +3,36 @@
  *
  * Allocates large blocks and bumps a pointer for each allocation.
  * Oversized allocations get their own dedicated block.
+ *
+ * Design notes:
+ *
+ *   Alignment is fixed at 8 bytes, not max_align_t (typically 16 on x86_64).
+ *   All arena-allocated data in toktoken is char* strings and pointer arrays;
+ *   no SIMD, long double, or over-aligned types are ever arena-allocated.
+ *   8-byte alignment satisfies all actual use cases and halves the padding
+ *   waste compared to 16.
+ *
+ *   New blocks are prepended to the list (become head), which means residual
+ *   space in the previous block is abandoned.  This is a deliberate trade-off:
+ *   the arena is used in short-lived scan phases (read rows, discard most,
+ *   deep-copy survivors, free everything) where allocations are sequential,
+ *   small, and fit comfortably in 64KB blocks.  Maintaining a free-list or
+ *   separate oversized chain would add complexity for zero practical gain.
+ *
+ *   NULL-arena is handled with a silent return NULL rather than an assert().
+ *   In a CLI tool, crashing the process on a programming error is worse than
+ *   propagating NULL -- and ASAN catches the dereference immediately in debug
+ *   builds anyway.
+ *
+ *   tt_arena_used() reports aligned-bytes-dispensed, not gross RSS.  It is
+ *   used exclusively in unit tests to verify the allocator works, not as a
+ *   memory profiler.  Block-header overhead and tail waste are intentionally
+ *   excluded to keep the accounting trivial.
  */
 
 #include "arena.h"
 
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -53,6 +79,10 @@ void *tt_arena_alloc(tt_arena_t *a, size_t size)
 {
     if (!a || size == 0) return NULL;
 
+    /* Guard against size_t wraparound in align_up().  No real call path in
+     * toktoken ever approaches this limit, but the check is free. */
+    if (size > SIZE_MAX - TT_ARENA_ALIGNMENT) return NULL;
+
     size_t aligned = align_up(size, TT_ARENA_ALIGNMENT);
 
     /* Try current block */
@@ -89,8 +119,10 @@ char *tt_arena_strdup(tt_arena_t *a, const char *s)
 char *tt_arena_strndup(tt_arena_t *a, const char *s, size_t n)
 {
     if (!a || !s) return NULL;
-    size_t len = strlen(s);
-    if (n < len) len = n;
+    /* Use strnlen() instead of strlen() so the function stays safe even if
+     * the caller passes a buffer that is not null-terminated (read at most
+     * n bytes to find the length, never beyond). */
+    size_t len = strnlen(s, n);
     char *d = tt_arena_alloc(a, len + 1);
     if (d) {
         memcpy(d, s, len);

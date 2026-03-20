@@ -18,6 +18,7 @@
 #define TT_WEIGHT_SUMMARY_WORD 1
 #define TT_WEIGHT_KEYWORD 3
 #define TT_WEIGHT_DOCSTRING_WORD 1
+#define TT_WEIGHT_CENTRALITY 0.3
 
 /* Minimum score threshold for single/double-word queries.
  * For queries with 3+ words, the threshold scales up to require

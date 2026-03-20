@@ -51,15 +51,23 @@ static const char *DDL_IMPORTS =
     "    id INTEGER PRIMARY KEY AUTOINCREMENT,"
     "    source_file TEXT NOT NULL REFERENCES files(path) ON DELETE CASCADE,"
     "    target_name TEXT NOT NULL,"
+    "    resolved_file TEXT NOT NULL DEFAULT '',"
     "    kind TEXT NOT NULL DEFAULT 'module',"
     "    import_type TEXT NOT NULL DEFAULT 'import'"
     ");"
     "CREATE INDEX IF NOT EXISTS idx_imports_source ON imports(source_file);"
     "CREATE INDEX IF NOT EXISTS idx_imports_target ON imports(target_name);"
+    "CREATE INDEX IF NOT EXISTS idx_imports_resolved ON imports(resolved_file);"
     "CREATE INDEX IF NOT EXISTS idx_imports_kind ON imports(kind);";
 
+static const char *DDL_CENTRALITY =
+    "CREATE TABLE IF NOT EXISTS file_centrality ("
+    "    file TEXT PRIMARY KEY,"
+    "    score REAL NOT NULL DEFAULT 0.0"
+    ");";
+
 static const char *DDL_METADATA_INIT =
-    "INSERT OR IGNORE INTO metadata (key, value) VALUES ('schema_version', '3');"
+    "INSERT OR IGNORE INTO metadata (key, value) VALUES ('schema_version', '4');"
     "INSERT OR IGNORE INTO metadata (key, value) VALUES ('indexed_at', '');"
     "INSERT OR IGNORE INTO metadata (key, value) VALUES ('git_head', '');";
 
@@ -110,6 +118,8 @@ int tt_schema_create(sqlite3 *db)
     if (exec_sql(db, DDL_TABLES) < 0)
         return -1;
     if (exec_sql(db, DDL_IMPORTS) < 0)
+        return -1;
+    if (exec_sql(db, DDL_CENTRALITY) < 0)
         return -1;
     if (exec_sql(db, DDL_METADATA_INIT) < 0)
         return -1;
@@ -203,6 +213,20 @@ int tt_schema_migrate(sqlite3 *db)
                 "DROP INDEX IF EXISTS idx_symbols_qualified;"
                 "CREATE INDEX IF NOT EXISTS idx_symbols_parent ON symbols(parent_id);"
                 "INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', '3');") < 0)
+            return -1;
+    }
+
+    if (version < 4)
+    {
+        /* v3 -> v4: Add file_centrality table + resolved_file column */
+        if (exec_sql(db,
+                "CREATE TABLE IF NOT EXISTS file_centrality ("
+                "    file TEXT PRIMARY KEY,"
+                "    score REAL NOT NULL DEFAULT 0.0"
+                ");"
+                "ALTER TABLE imports ADD COLUMN resolved_file TEXT NOT NULL DEFAULT '';"
+                "CREATE INDEX IF NOT EXISTS idx_imports_resolved ON imports(resolved_file);"
+                "INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', '4');") < 0)
             return -1;
     }
 

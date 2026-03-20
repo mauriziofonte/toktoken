@@ -36,9 +36,15 @@ Works with Claude Code, Cursor, Windsurf, Copilot, Gemini, Codex, **and any MCP-
 
 - **46 languages** via [universal-ctags](https://ctags.io/) + 14 custom parsers (see [docs/LANGUAGES.md](docs/LANGUAGES.md))
 - **Import graph**: cross-file dependency tracking with `find:importers`, `find:references`, `find:callers`, and `inspect:dependencies`
-- **FTS5 search** with relevance scoring and cascading query strategies
-- **Incremental indexing** using content hashing -- re-indexes only changed files
-- **MCP server** (`toktoken serve`) for native IDE integration
+- **FTS5 search** with relevance scoring, cascading query strategies, and token-budget-aware result slicing
+- **Incremental indexing** using content hashing -- re-indexes only changed files, including single-file reindex
+- **Dead code detection**: find symbols with no callers or importers across the codebase
+- **Blast radius analysis**: trace all files and symbols affected by a change to a given file or symbol
+- **Circular import detection**: identify import cycles in the dependency graph
+- **Multi-symbol bundles**: retrieve context bundles for multiple symbols in a single call with markdown output option
+- **Scope-filtered search**: restrict symbol and text search to a subtree or file set
+- **Centrality-based ranking**: symbols ranked by import-graph centrality in addition to FTS relevance
+- **MCP server** (`toktoken serve`) for native IDE integration with tiered tool loading
 - **GitHub repo indexing** (`toktoken index:github owner/repo`) -- index any public repo without cloning
 - **Smart filtering**: excludes non-code files (CSS, HTML) and vendored directories by default
 - **Security**: symlink escape detection, secret pattern filtering, binary exclusion
@@ -100,21 +106,26 @@ toktoken index:update
 | ------- | ----------- |
 | `index:create [path]` | Create index for a project |
 | `index:update [path]` | Incremental re-index (hash-based) |
+| `index:file <file>` | Reindex a single file |
 | `index:github <repo>` | Clone and index a GitHub repository |
-| `search:symbols <query>` | Search symbols by name (FTS5 + scoring) |
+| `search:symbols <query>` | Search symbols by name (FTS5 + scoring + centrality ranking) |
 | `search:text <query>` | Full-text search across files (ripgrep + fallback) |
+| `search:cooccurrence <a>,<b>` | Find symbols that co-occur in the same file |
+| `search:similar <id>` | Find symbols similar to a given one |
 | `inspect:outline <file>` | Show file symbol hierarchy |
 | `inspect:symbol <id>` | Retrieve symbol source code |
 | `inspect:file <file>` | Show file content (supports `--lines START-END`) |
-| `inspect:bundle <id>` | Get symbol context bundle (definition + imports + outline) |
+| `inspect:bundle <id>[,id2,...]` | Get symbol context bundle (definition + imports + outline); comma-separated IDs for multi-symbol; `--format markdown` for markdown output |
 | `inspect:tree` | Show indexed file tree |
 | `inspect:dependencies <file>` | Trace transitive import graph (recursive) |
 | `inspect:hierarchy <file>` | Show class/function hierarchy with parent-child relationships |
 | `find:importers <file>` | Find files that import a given file |
 | `find:references <id>` | Find import references to an identifier |
 | `find:callers <id>` | Find symbols that likely call a given function/method |
-| `search:cooccurrence <a>,<b>` | Find symbols that co-occur in the same file |
-| `search:similar <id>` | Find symbols similar to a given one |
+| `find:dead` | Find symbols with no callers or importers (dead code detection) |
+| `inspect:blast <id>` | Symbol blast radius analysis (files transitively affected by a change) |
+| `inspect:cycles` | Detect circular import chains in the dependency graph |
+| `help [command]` | List all tools or show detailed usage for a specific tool |
 | `stats` | Index statistics + token savings report |
 | `cache:clear` | Delete current project index. With `--all --force`: delete all TokToken data |
 | `codebase:detect [path]` | Detect if directory is a codebase |
@@ -312,7 +323,7 @@ For Cursor, Windsurf, Gemini CLI, Gemini Code Assist, and Claude Desktop, add th
 | Gemini Code Assist | `.gemini/settings.json` in project root | [setup](docs/setup/gemini-code-assist.md) |
 | OpenAI Codex CLI | `AGENTS.md` in project root (no MCP) | [setup](docs/setup/codex-cli.md) |
 
-Exposes 21 tools: `codebase_detect`, `index_create`, `index_update`, `index_github`, `search_symbols`, `search_text`, `search_cooccurrence`, `search_similar`, `inspect_outline`, `inspect_symbol`, `inspect_file`, `inspect_tree`, `inspect_bundle`, `inspect_dependencies`, `inspect_hierarchy`, `stats`, `projects_list`, `cache_clear`, `find_importers`, `find_references`, `find_callers`.
+Exposes 26 tools: `codebase_detect`, `index_create`, `index_update`, `index_file`, `index_github`, `search_symbols`, `search_text`, `search_cooccurrence`, `search_similar`, `inspect_outline`, `inspect_symbol`, `inspect_file`, `inspect_tree`, `inspect_bundle`, `inspect_dependencies`, `inspect_hierarchy`, `inspect_cycles`, `inspect_blast_radius`, `find_importers`, `find_references`, `find_callers`, `find_dead`, `stats`, `projects_list`, `cache_clear`, `help`.
 
 ## AI Agent Setup
 

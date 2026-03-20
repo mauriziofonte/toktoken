@@ -1060,21 +1060,31 @@ static bool is_source_tree_path(const char *rel_path)
 /*
  * has_vendor_manifest -- Check if a directory contains a package manager manifest.
  *
- * Used by the smart filter to prune vendored third-party subdirectories.
+ * Uses a single opendir()/readdir() scan instead of N stat() calls per directory.
+ * Matches entry names against the VENDOR_MANIFESTS list (typically 9 entries).
  */
 static bool has_vendor_manifest(const char *dir_path)
 {
-    for (const char **m = VENDOR_MANIFESTS; *m; m++)
+    DIR *d = opendir(dir_path);
+    if (!d)
+        return false;
+
+    bool found = false;
+    struct dirent *ent;
+    while ((ent = readdir(d)) != NULL)
     {
-        char *check = tt_path_join(dir_path, *m);
-        if (!check)
-            continue;
-        bool exists = tt_file_exists(check);
-        free(check);
-        if (exists)
-            return true;
+        for (const char **m = VENDOR_MANIFESTS; *m; m++)
+        {
+            if (strcmp(ent->d_name, *m) == 0)
+            {
+                found = true;
+                goto done;
+            }
+        }
     }
-    return false;
+done:
+    closedir(d);
+    return found;
 }
 
 /* ===== Path-only discovery (lightweight) ===== */

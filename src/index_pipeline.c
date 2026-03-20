@@ -924,6 +924,203 @@ static int build_symbols_for_group(const char *project_root,
     return 0;
 }
 
+/* ===== JS/TS const extraction ===== */
+
+static bool is_js_ts_file(const char *rel_path)
+{
+    const char *dot = strrchr(rel_path, '.');
+    if (!dot) return false;
+    return (strcasecmp(dot, ".js") == 0 || strcasecmp(dot, ".jsx") == 0 ||
+            strcasecmp(dot, ".ts") == 0 || strcasecmp(dot, ".tsx") == 0 ||
+            strcasecmp(dot, ".mjs") == 0 || strcasecmp(dot, ".cjs") == 0 ||
+            strcasecmp(dot, ".mts") == 0);
+}
+
+/*
+ * Extract `const NAME = <non-function-value>` as constant symbols.
+ * Skips destructuring, arrow functions, function expressions,
+ * and names already extracted by ctags.
+ */
+static void extract_js_constants(const char *project_root,
+                                 const char *rel_path, local_batch_t *lb)
+{
+    char *full = tt_path_join(project_root, rel_path);
+    if (!full) return;
+
+    char *content = tt_read_file(full, NULL);
+    free(full);
+    if (!content) return;
+
+    /* Build set of existing symbol names for dedup */
+    tt_hashmap_t *existing = tt_hashmap_new(
+        lb->sym_count > 4 ? (size_t)lb->sym_count * 2 : 16);
+    for (int i = 0; i < lb->sym_count; i++) {
+        if (lb->symbols[i].name && lb->symbols[i].file &&
+            strcmp(lb->symbols[i].file, rel_path) == 0)
+            tt_hashmap_set(existing, lb->symbols[i].name, (void *)1);
+    }
+
+    /* Determine language string for symbols */
+    const char *dot = strrchr(rel_path, '.');
+    const char *lang = "javascript";
+    if (dot && (strcasecmp(dot, ".ts") == 0 || strcasecmp(dot, ".tsx") == 0 ||
+                strcasecmp(dot, ".mts") == 0))
+        lang = "typescript";
+
+    tt_symbol_t *extras = NULL;
+    int ex_count = 0, ex_cap = 0;
+
+    const char *p = content;
+    int line_num = 1;
+
+    while (*p) {
+        /* Find start of line, skip whitespace */
+        const char *line_start = p;
+        while (*p == ' ' || *p == '\t') p++;
+
+        /* Check for optional `export ` prefix */
+        const char *after_export = p;
+        if (strncmp(p, "export ", 7) == 0)
+            after_export = p + 7;
+
+        /* Match `const ` keyword */
+        if (strncmp(after_export, "const ", 6) != 0)
+            goto next_line;
+
+        const char *name_start = after_export + 6;
+        while (*name_start == ' ' || *name_start == '\t') name_start++;
+
+        /* Skip destructuring: { or [ after const */
+        if (*name_start == '{' || *name_start == '[')
+            goto next_line;
+
+        /* Read identifier */
+        const char *name_end = name_start;
+        while (*name_end && (isalnum((unsigned char)*name_end) || *name_end == '_' || *name_end == '$'))
+            name_end++;
+
+        size_t name_len = (size_t)(name_end - name_start);
+        if (name_len == 0 || name_len > 128)
+            goto next_line;
+
+        /* Skip to = sign */
+        const char *eq = name_end;
+        while (*eq == ' ' || *eq == '\t') eq++;
+        if (*eq != '=')
+            goto next_line;
+        eq++;
+        while (*eq == ' ' || *eq == '\t') eq++;
+
+        /* Skip function expressions: function, async, arrow functions */
+        if (strncmp(eq, "function", 8) == 0 && !isalnum((unsigned char)eq[8]))
+            goto next_line;
+        if (strncmp(eq, "async", 5) == 0 && !isalnum((unsigned char)eq[5]))
+            goto next_line;
+        if (*eq == '(') {
+            /* Value starts with ( — could be multi-line arrow function.
+             * Scan forward across lines (up to ~500 chars) for =>. */
+            const char *scan = eq;
+            int depth = 0;
+            int chars = 0;
+            while (*scan && chars < 500) {
+                if (*scan == '(') depth++;
+                else if (*scan == ')') {
+                    depth--;
+                    if (depth == 0) {
+                        /* After closing ), skip whitespace and check for => */
+                        scan++;
+                        while (*scan == ' ' || *scan == '\t' || *scan == '\n' || *scan == '\r')
+                            scan++;
+                        if (scan[0] == '=' && scan[1] == '>')
+                            goto next_line;
+                        break;
+                    }
+                }
+                scan++;
+                chars++;
+            }
+        }
+        /* Check if current line contains => anywhere (inline arrow) */
+        {
+            const char *scan = eq;
+            while (*scan && *scan != '\n') {
+                if (scan[0] == '=' && scan[1] == '>') goto next_line;
+                scan++;
+            }
+        }
+
+        /* Extract name */
+        {
+            char name[130];
+            memcpy(name, name_start, name_len);
+            name[name_len] = '\0';
+
+            /* Skip if ctags already found it */
+            if (tt_hashmap_has(existing, name))
+                goto next_line;
+
+            /* Build symbol */
+            if (ex_count >= ex_cap) {
+                ex_cap = ex_cap ? ex_cap * 2 : 16;
+                tt_symbol_t *tmp = realloc(extras, (size_t)ex_cap * sizeof(tt_symbol_t));
+                if (!tmp) goto done;
+                extras = tmp;
+            }
+
+            tt_symbol_t *sym = &extras[ex_count];
+            memset(sym, 0, sizeof(*sym));
+            sym->file = tt_strdup(rel_path);
+            sym->name = tt_strdup(name);
+            sym->qualified_name = tt_strdup(name);
+            sym->kind = TT_KIND_CONSTANT;
+            sym->language = tt_strdup(lang);
+            sym->line = line_num;
+            sym->end_line = line_num;
+            sym->signature = tt_strdup("");
+            sym->docstring = tt_strdup("");
+            sym->summary = tt_strdup("");
+            sym->decorators = tt_strdup("[]");
+            sym->keywords = tt_extract_keywords(name);
+            sym->parent_id = NULL;
+            sym->content_hash = tt_strdup("");
+            sym->id = tt_symbol_make_id(rel_path, name, "constant", 0);
+
+            /* Mark as seen to avoid duplicates within the same file */
+            tt_hashmap_set(existing, sym->name, (void *)1);
+            ex_count++;
+        }
+
+next_line:
+        /* Advance to next line */
+        while (*p && *p != '\n') p++;
+        if (*p == '\n') { p++; line_num++; }
+    }
+
+done:
+    tt_hashmap_free(existing);
+    free(content);
+
+    if (ex_count > 0 && extras) {
+        int needed = lb->sym_count + ex_count;
+        if (needed > lb->sym_cap) {
+            lb->sym_cap = needed * 2;
+            tt_symbol_t *tmp = realloc(lb->symbols,
+                                       (size_t)lb->sym_cap * sizeof(tt_symbol_t));
+            if (tmp) lb->symbols = tmp;
+        }
+        if (lb->sym_count + ex_count <= lb->sym_cap) {
+            memcpy(&lb->symbols[lb->sym_count], extras,
+                   (size_t)ex_count * sizeof(tt_symbol_t));
+            lb->sym_count += ex_count;
+            free(extras);
+        } else {
+            tt_symbol_array_free(extras, ex_count);
+        }
+    } else if (extras) {
+        free(extras);
+    }
+}
+
 /* ===== Custom parser integration ===== */
 
 static void merge_custom_parser(const char *project_root,
@@ -1002,6 +1199,10 @@ static void merge_custom_parser(const char *project_root,
         else
             free(extra);
     }
+
+    /* JS/TS const extraction (runs after ctags + custom parsers) */
+    if (is_js_ts_file(rel_path))
+        extract_js_constants(project_root, rel_path, lb);
 }
 
 /* ===== Enqueue a batch ===== */
@@ -1334,6 +1535,10 @@ static void *worker_fn(void *arg)
                 }
                 free(lines);
             }
+
+            /* Run custom parsers for files ctags doesn't know about
+             * (Vue, Gleam, GDScript, HCL, Nix, GraphQL, Julia, etc.) */
+            merge_custom_parser(ctx->project_root, rel, &lb);
 
             /* Always insert file record so change detection won't
              * perpetually re-discover it as "added". */
@@ -1781,9 +1986,13 @@ int tt_pipeline_start(const tt_pipeline_config_t *config,
 
     mpsc_queue_init(&h->queue);
 
-    /* Drop FTS triggers and secondary indexes for bulk insert performance */
-    tt_schema_drop_fts_triggers(config->db->db);
-    tt_schema_drop_secondary_indexes(config->db->db);
+    /* Drop FTS triggers and secondary indexes for bulk insert performance.
+     * In incremental mode (single-file reindex), keep them active so FTS
+     * is updated incrementally via triggers — avoids O(total_symbols) rebuild. */
+    if (!config->incremental) {
+        tt_schema_drop_fts_triggers(config->db->db);
+        tt_schema_drop_secondary_indexes(config->db->db);
+    }
 
     /* Set up worker contexts */
     h->worker_ctxs = calloc((size_t)K, sizeof(worker_ctx_t));
@@ -1988,7 +2197,7 @@ int tt_pipeline_run(const tt_pipeline_config_t *config,
     if (rc < 0)
         return rc;
     rc = tt_pipeline_join(handle, result);
-    if (rc == 0)
+    if (rc == 0 && !config->incremental)
         tt_pipeline_finalize_schema(config->db);
     return rc;
 }

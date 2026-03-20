@@ -14,6 +14,7 @@
 #include "cmd_find.h"
 #include "cmd_bundle.h"
 #include "cmd_update.h"
+#include "cmd_help.h"
 #include "update_check.h"
 
 #include <stdio.h>
@@ -53,6 +54,7 @@ static void print_usage(void)
             "Indexing:\n"
             "  index:create [path]    Create index for a project\n"
             "  index:update [path]    Update existing index\n"
+            "  index:file <file>      Reindex a single file\n"
             "  index:github <repo>    Clone and index a GitHub repository\n"
             "\n"
             "Search:\n"
@@ -63,6 +65,7 @@ static void print_usage(void)
             "  find:importers <file>  Find files that import a given file\n"
             "  find:references <id>   Find import references to an identifier\n"
             "  find:callers <id>      Find symbols that call a given function\n"
+            "  find:dead             Find unreferenced symbols\n"
             "\n"
             "Inspect:\n"
             "  inspect:outline <file> Show file symbol hierarchy\n"
@@ -72,6 +75,11 @@ static void print_usage(void)
             "  inspect:tree           Show indexed file tree\n"
             "  inspect:dependencies <file> Trace transitive import graph\n"
             "  inspect:hierarchy <file>    Show class/function hierarchy\n"
+            "  inspect:cycles              Detect circular import cycles\n"
+            "  inspect:blast <id>          Symbol blast radius analysis\n"
+            "\n"
+            "Help:\n"
+            "  help [command]         List all tools or show detailed usage\n"
             "\n"
             "Management:\n"
             "  stats                  Show index statistics\n"
@@ -103,10 +111,21 @@ static void print_usage(void)
             "  -D, --debug            Show scoring breakdown\n"
             "      --no-sig           Omit signatures from results\n"
             "      --no-summary       Omit summaries from results\n"
+            "      --detail <level>   Detail: compact, standard (default), full\n"
+            "      --token-budget <n> Max token budget for results\n"
+            "      --scope-imports-of <file>  Scope to files imported by file\n"
+            "      --scope-importers-of <file> Scope to files that import file\n"
+            "\n"
+            "Find options:\n"
+            "      --has-importers    Enrich importers with has_importers flag\n"
+            "      --exclude-tests    Exclude test files (find:dead)\n"
             "\n"
             "Inspect options:\n"
             "      --lines <start-end>  Line range for inspect:file\n"
-            "  -d, --depth <n>        Tree depth for inspect:tree\n"
+            "  -d, --depth <n>        Tree depth / blast radius depth\n"
+            "      --include-callers  Include callers in bundle output\n"
+            "      --cross-dir        Show only cross-directory cycles\n"
+            "      --min-length <n>   Min cycle length (inspect:cycles)\n"
             "\n"
             "Global options:\n"
             "  -p, --path <dir>       Project path (default: current directory)\n"
@@ -138,6 +157,7 @@ typedef struct
 static const cmd_entry_t commands[] = {
     {"index:create", tt_cmd_index_create},
     {"index:update", tt_cmd_index_update},
+    {"index:file", tt_cmd_index_file},
     {"search:symbols", tt_cmd_search_symbols},
     {"search:text", tt_cmd_search_text},
     {"inspect:outline", tt_cmd_inspect_outline},
@@ -156,11 +176,15 @@ static const cmd_entry_t commands[] = {
     {"find:importers", tt_cmd_find_importers},
     {"find:references", tt_cmd_find_references},
     {"find:callers", tt_cmd_find_callers},
+    {"find:dead", tt_cmd_find_dead},
     {"search:cooccurrence", tt_cmd_search_cooccurrence},
     {"search:similar", tt_cmd_search_similar},
     {"inspect:dependencies", tt_cmd_inspect_dependencies},
     {"inspect:hierarchy", tt_cmd_inspect_hierarchy},
+    {"inspect:cycles", tt_cmd_inspect_cycles},
+    {"inspect:blast", tt_cmd_inspect_blast},
     {"serve", tt_cmd_serve},
+    {"help", tt_cmd_help},
     {NULL, NULL}};
 
 int main(int argc, char *argv[])

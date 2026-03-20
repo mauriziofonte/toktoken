@@ -3,6 +3,7 @@
  */
 
 #include "index_store.h"
+#include "arena.h"
 #include "symbol_kind.h"
 #include "symbol_scorer.h"
 #include "platform.h"
@@ -15,6 +16,8 @@
 #include <stdio.h>
 #include <ctype.h>
 #include <sys/stat.h>
+#include <math.h>
+#include <stdint.h>
 
 /* Forward declarations */
 static int compare_by_score_desc(const void *a, const void *b);
@@ -59,6 +62,69 @@ static char *col_strdup_nullable(sqlite3_stmt *stmt, int col)
         return NULL;
     const char *val = (const char *)sqlite3_column_text(stmt, col);
     return val ? tt_strdup(val) : NULL;
+}
+
+/* ---- Arena-aware column helpers (strings allocated from arena) ---- */
+
+static char *col_astrdup(tt_arena_t *a, sqlite3_stmt *stmt, int col)
+{
+    const char *val = (const char *)sqlite3_column_text(stmt, col);
+    return tt_arena_strdup(a, val ? val : "");
+}
+
+static char *col_astrdup_nullable(tt_arena_t *a, sqlite3_stmt *stmt, int col)
+{
+    if (sqlite3_column_type(stmt, col) == SQLITE_NULL)
+        return NULL;
+    const char *val = (const char *)sqlite3_column_text(stmt, col);
+    return val ? tt_arena_strdup(a, val) : NULL;
+}
+
+/* Read a full symbol row with all strings allocated from arena. */
+static void read_symbol_row_arena(tt_arena_t *a, sqlite3_stmt *stmt, tt_symbol_t *sym)
+{
+    sym->id = col_astrdup(a, stmt, 0);
+    sym->file = col_astrdup(a, stmt, 1);
+    sym->name = col_astrdup(a, stmt, 2);
+    sym->qualified_name = col_astrdup(a, stmt, 3);
+    {
+        const char *kind_str = (const char *)sqlite3_column_text(stmt, 4);
+        sym->kind = tt_kind_from_ctags(kind_str ? kind_str : "");
+    }
+    sym->language = col_astrdup(a, stmt, 5);
+    sym->signature = col_astrdup(a, stmt, 6);
+    sym->docstring = col_astrdup(a, stmt, 7);
+    sym->summary = col_astrdup(a, stmt, 8);
+    sym->decorators = col_astrdup(a, stmt, 9);
+    sym->keywords = col_astrdup(a, stmt, 10);
+    sym->parent_id = col_astrdup_nullable(a, stmt, 11);
+    sym->line = sqlite3_column_int(stmt, 12);
+    sym->end_line = sqlite3_column_int(stmt, 13);
+    sym->byte_offset = sqlite3_column_int(stmt, 14);
+    sym->byte_length = sqlite3_column_int(stmt, 15);
+    sym->content_hash = col_astrdup(a, stmt, 16);
+}
+
+/*
+ * Deep-copy all string fields of a symbol from arena memory to heap memory.
+ * After this call, the symbol owns heap-allocated strings and can be freed
+ * normally with tt_symbol_free(). The old arena pointers are NOT freed
+ * (the arena will reclaim them in bulk).
+ */
+static void symbol_to_heap(tt_symbol_t *sym)
+{
+    sym->id = tt_strdup(sym->id);
+    sym->file = tt_strdup(sym->file);
+    sym->name = tt_strdup(sym->name);
+    sym->qualified_name = tt_strdup(sym->qualified_name);
+    sym->language = tt_strdup(sym->language);
+    sym->signature = tt_strdup(sym->signature);
+    sym->docstring = tt_strdup(sym->docstring);
+    sym->summary = tt_strdup(sym->summary);
+    sym->decorators = tt_strdup(sym->decorators);
+    sym->keywords = tt_strdup(sym->keywords);
+    sym->parent_id = sym->parent_id ? tt_strdup(sym->parent_id) : NULL;
+    sym->content_hash = tt_strdup(sym->content_hash);
 }
 
 /* ---- Free functions ---- */
@@ -436,6 +502,9 @@ int tt_store_search_symbols(tt_index_store_t *store, const char *query,
     char **query_words = tt_str_split_words(query_lower, &word_count);
     bool match_all = (!query_lower[0]);
 
+    /* Load centrality map for search ranking bonus */
+    tt_hashmap_t *centrality_map = tt_store_load_centrality(store);
+
     /* Phase 1: Get candidates */
     sqlite3_stmt *candidates = NULL;
     bool use_fts = (!regex && !match_all);
@@ -521,7 +590,15 @@ int tt_store_search_symbols(tt_index_store_t *store, const char *query,
 
     tt_strbuf_free(&sql);
 
-    /* Phase 2: Filter + score */
+    /* Phase 2: Filter + score.
+     *
+     * Arena strategy: all symbol strings from SQLite go into the arena.
+     * Discarded symbols (filtered out, score too low, over limit) are
+     * simply abandoned — the arena reclaims them in bulk.
+     * Surviving symbols get deep-copied to heap before the arena is freed,
+     * so callers can free them normally with tt_symbol_free(). */
+    tt_arena_t *arena = tt_arena_new(0);
+
     tt_array_t results;
     tt_array_init(&results);
 
@@ -533,16 +610,13 @@ int tt_store_search_symbols(tt_index_store_t *store, const char *query,
     {
         tt_symbol_t sym;
         memset(&sym, 0, sizeof(sym));
-        read_symbol_row(candidates, &sym);
+        read_symbol_row_arena(arena, candidates, &sym);
 
         /* File pattern filter */
         if (file_pattern && file_pattern[0])
         {
             if (!tt_fnmatch(file_pattern, sym.file, true))
-            {
-                tt_symbol_free(&sym);
-                continue;
-            }
+                continue; /* arena reclaims strings */
         }
 
         double score = 1.0;
@@ -553,10 +627,7 @@ int tt_store_search_symbols(tt_index_store_t *store, const char *query,
             if (!simple_match(sym.name, query_lower) &&
                 !simple_match(sym.qualified_name, query_lower) &&
                 !simple_match(sym.signature, query_lower))
-            {
-                tt_symbol_free(&sym);
-                continue;
-            }
+                continue; /* arena reclaims strings */
         }
         else if (!match_all)
         {
@@ -576,20 +647,24 @@ int tt_store_search_symbols(tt_index_store_t *store, const char *query,
                 min_score = TT_WEIGHT_NAME_WORD * ((word_count + 1) / 2);
 
             if (score < min_score)
-            {
-                tt_symbol_free(&sym);
-                continue;
+                continue; /* arena reclaims strings */
+        }
+
+        /* Apply centrality bonus: log(1+importers) * 0.3 */
+        if (centrality_map && sym.file) {
+            void *val = tt_hashmap_get(centrality_map, sym.file);
+            if (val) {
+                double cent = (double)(intptr_t)val / 1000.0;
+                score += cent * TT_WEIGHT_CENTRALITY;
             }
         }
 
         tt_symbol_result_t *r = malloc(sizeof(tt_symbol_result_t));
         if (!r)
-        {
-            tt_symbol_free(&sym);
             break;
-        }
         r->sym = sym;
         r->score = score;
+        r->dbg_name = r->dbg_sig = r->dbg_summary = r->dbg_keyword = r->dbg_docstring = 0;
         tt_array_push(&results, r);
     }
 
@@ -602,20 +677,19 @@ int tt_store_search_symbols(tt_index_store_t *store, const char *query,
         tt_array_sort(&results, compare_by_score_desc);
     }
 
-    /* Phase 4: Limit to max_results */
+    /* Phase 4: Limit to max_results.
+     * Over-limit results are abandoned — arena owns their strings,
+     * we only free the malloc'd container struct. */
     int final_count = (int)results.len;
     if (max_results > 0 && final_count > max_results)
     {
         for (int i = max_results; i < final_count; i++)
-        {
-            tt_symbol_result_t *r = results.items[i];
-            tt_symbol_result_free(r);
-            free(r);
-        }
+            free(results.items[i]); /* free container, arena owns strings */
         final_count = max_results;
     }
 
-    /* Copy to output */
+    /* Phase 5: Copy survivors to output, deep-copying strings to heap.
+     * After this, the arena can be safely freed. */
     out->results = malloc(sizeof(tt_symbol_result_t) * (final_count > 0 ? final_count : 1));
     out->count = final_count;
 
@@ -625,11 +699,14 @@ int tt_store_search_symbols(tt_index_store_t *store, const char *query,
         {
             tt_symbol_result_t *r = results.items[i];
             out->results[i] = *r;
+            symbol_to_heap(&out->results[i].sym);
             free(r);
         }
     }
 
+    tt_arena_free(arena);
     tt_array_free(&results);
+    tt_hashmap_free(centrality_map);
     free(query_lower);
     tt_str_split_free(query_words);
     return 0;
@@ -1524,6 +1601,602 @@ int tt_store_delete_imports_for_file(tt_index_store_t *store, const char *file_p
     return 0;
 }
 
+/* ==== Import resolution ==== */
+
+/* Common file extensions to try when resolving import specifiers.
+ * Grouped by language family. Order matters: try most likely first. */
+static const char *RESOLVE_EXTENSIONS[] = {
+    ".php",
+    ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".vue",
+    ".py",
+    ".java", ".kt", ".scala",
+    ".rb",
+    ".go",
+    ".rs",
+    ".cs",
+    ".swift",
+    ".hs",
+    ".c", ".h", ".cpp", ".hpp", ".cc",
+    NULL
+};
+
+/* Normalize an import specifier by converting language-specific separators
+ * to forward slashes. Writes result into buf (must be >= len+1).
+ * Returns the length written (excluding NUL). */
+static size_t normalize_specifier(const char *spec, char *buf, size_t bufsize)
+{
+    size_t i = 0;
+    bool has_slash = (strchr(spec, '/') != NULL);
+
+    for (; spec[i] && i < bufsize - 1; i++)
+    {
+        char c = spec[i];
+        if (c == '\\')
+            buf[i] = '/'; /* PHP namespaces */
+        else if (c == ':' && spec[i + 1] == ':')
+        {
+            buf[i] = '/'; /* Rust :: */
+            i++;
+            /* skip second colon */
+            continue;
+        }
+        else if (c == '.' && !has_slash && i > 0 && spec[i - 1] != '.' &&
+                 spec[i + 1] && spec[i + 1] != '.' && spec[i + 1] != '/')
+        {
+            /* Python/Java dot separator — only if no slashes exist in spec
+             * and not a file extension (preceded by path component).
+             * Skip if it looks like a file extension (e.g., "app.types"). */
+            const char *rest = spec + i + 1;
+            bool looks_like_ext = true;
+            for (const char *r = rest; *r; r++)
+            {
+                if (*r == '.')
+                {
+                    looks_like_ext = false;
+                    break;
+                }
+            }
+            /* If there are more dots ahead, treat this as a module separator */
+            if (!looks_like_ext)
+                buf[i] = '/';
+            else
+                buf[i] = '/'; /* treat as separator anyway for resolution */
+        }
+        else
+        {
+            buf[i] = c;
+        }
+    }
+    buf[i] = '\0';
+    return i;
+}
+
+/* Resolve a relative path (starting with ./ or ../) against a source file.
+ * Returns a heap-allocated resolved path, or NULL on failure. */
+static char *resolve_relative(const char *source_file, const char *target)
+{
+    /* Find directory of source_file */
+    const char *last_slash = strrchr(source_file, '/');
+    size_t dir_len = last_slash ? (size_t)(last_slash - source_file) : 0;
+
+    /* Build initial path: dir/target */
+    size_t tlen = strlen(target);
+    size_t bufsize = dir_len + 1 + tlen + 1;
+    char *result = malloc(bufsize);
+    if (!result) return NULL;
+
+    if (dir_len > 0)
+    {
+        memcpy(result, source_file, dir_len);
+        result[dir_len] = '/';
+        memcpy(result + dir_len + 1, target, tlen + 1);
+    }
+    else
+    {
+        memcpy(result, target, tlen + 1);
+    }
+
+    /* Simplify: resolve . and .. components in-place */
+    int nparts = 0;
+    int part_cap = 32;
+    char **parts = malloc((size_t)part_cap * sizeof(char *));
+    if (!parts) { free(result); return NULL; }
+
+    char *p = result;
+    char *tok = strtok(p, "/");
+    while (tok)
+    {
+        if (strcmp(tok, ".") == 0)
+        {
+            /* skip */
+        }
+        else if (strcmp(tok, "..") == 0)
+        {
+            if (nparts > 0) nparts--;
+        }
+        else
+        {
+            if (nparts >= part_cap)
+            {
+                part_cap *= 2;
+                char **tmp = realloc(parts, (size_t)part_cap * sizeof(char *));
+                if (!tmp) { free(parts); free(result); return NULL; }
+                parts = tmp;
+            }
+            parts[nparts++] = tok;
+        }
+        tok = strtok(NULL, "/");
+    }
+
+    /* Reconstruct path */
+    size_t total = 0;
+    for (int i = 0; i < nparts; i++)
+        total += strlen(parts[i]) + 1;
+
+    char *resolved = malloc(total + 1);
+    if (!resolved) { free(parts); free(result); return NULL; }
+
+    size_t pos = 0;
+    for (int i = 0; i < nparts; i++)
+    {
+        if (i > 0) resolved[pos++] = '/';
+        size_t slen = strlen(parts[i]);
+        memcpy(resolved + pos, parts[i], slen);
+        pos += slen;
+    }
+    resolved[pos] = '\0';
+
+    free(parts);
+    free(result);
+    return resolved;
+}
+
+int tt_store_resolve_imports(tt_index_store_t *store)
+{
+    if (!store || !store->db) return -1;
+    sqlite3 *db = store->db->db;
+
+    /* Step 1: Load all file paths into two hashmaps:
+     * - exact_map: path → path (exact lookup)
+     * - suffix_map: lowercased suffix → path (suffix matching)
+     *   If collision, value is set to "" to mark ambiguous. */
+    sqlite3_stmt *file_stmt = NULL;
+    if (prepare(db, "SELECT path FROM files", &file_stmt) < 0)
+        return -1;
+
+    int file_count = 0, file_cap = 1024;
+    char **file_paths = malloc((size_t)file_cap * sizeof(char *));
+    if (!file_paths) { sqlite3_finalize(file_stmt); return -1; }
+
+    while (sqlite3_step(file_stmt) == SQLITE_ROW)
+    {
+        const char *p = (const char *)sqlite3_column_text(file_stmt, 0);
+        if (!p) continue;
+        if (file_count >= file_cap)
+        {
+            file_cap *= 2;
+            char **tmp = realloc(file_paths, (size_t)file_cap * sizeof(char *));
+            if (!tmp) break;
+            file_paths = tmp;
+        }
+        file_paths[file_count++] = tt_strdup(p);
+    }
+    sqlite3_finalize(file_stmt);
+
+    /* Build exact path lookup */
+    tt_hashmap_t *exact_map = tt_hashmap_new(
+        file_count > 16 ? (size_t)file_count * 2 : 32);
+
+    /* Build suffix map: for each file, generate suffixes (both with and
+     * without extension) in lowercase. Value = original path, or "" if ambiguous. */
+    tt_hashmap_t *suffix_map = tt_hashmap_new(
+        file_count > 16 ? (size_t)file_count * 8 : 64);
+
+    /* Build dir_map: directory suffix (lowered) → first file in that dir.
+     * Used for Go module-path and C# namespace resolution. */
+    tt_hashmap_t *dir_map = tt_hashmap_new(
+        file_count > 16 ? (size_t)file_count * 4 : 32);
+
+    for (int i = 0; i < file_count; i++)
+    {
+        const char *path = file_paths[i];
+        tt_hashmap_set(exact_map, path, file_paths[i]);
+
+        size_t plen = strlen(path);
+
+        /* Find extension offset */
+        const char *ext = strrchr(path, '.');
+        const char *last_slash = strrchr(path, '/');
+        if (ext && last_slash && ext < last_slash) ext = NULL; /* dot in dir name */
+        size_t stem_len = ext ? (size_t)(ext - path) : plen;
+
+        /* Generate suffixes by stripping leading path components */
+        for (size_t s = 0; s < plen; s++)
+        {
+            if (s > 0 && path[s - 1] != '/') continue;
+            const char *suffix = path + s;
+            size_t slen = plen - s;
+
+            /* Lowercase suffix for case-insensitive matching */
+            char *lower = malloc(slen + 1);
+            if (!lower) continue;
+            for (size_t j = 0; j < slen; j++)
+                lower[j] = (char)tolower((unsigned char)suffix[j]);
+            lower[slen] = '\0';
+
+            /* Store with extension */
+            if (tt_hashmap_has(suffix_map, lower))
+            {
+                /* Ambiguous: mark with empty string */
+                tt_hashmap_set(suffix_map, lower, (void *)"");
+            }
+            else
+            {
+                tt_hashmap_set(suffix_map, lower, file_paths[i]);
+            }
+
+            /* Store without extension (if applicable) */
+            if (ext && s < stem_len)
+            {
+                size_t no_ext_len = stem_len - s;
+                char *no_ext = malloc(no_ext_len + 1);
+                if (no_ext)
+                {
+                    for (size_t j = 0; j < no_ext_len; j++)
+                        no_ext[j] = (char)tolower((unsigned char)suffix[j]);
+                    no_ext[no_ext_len] = '\0';
+
+                    if (tt_hashmap_has(suffix_map, no_ext))
+                        tt_hashmap_set(suffix_map, no_ext, (void *)"");
+                    else
+                        tt_hashmap_set(suffix_map, no_ext, file_paths[i]);
+                    free(no_ext);
+                }
+            }
+
+            free(lower);
+        }
+
+        /* Populate dir_map: directory suffixes for this file */
+        const char *last_sl = strrchr(path, '/');
+        if (last_sl)
+        {
+            size_t dir_len = (size_t)(last_sl - path);
+            for (size_t s = 0; s <= dir_len; s++)
+            {
+                if (s > 0 && path[s - 1] != '/') continue;
+                size_t dslen = dir_len - s;
+                if (dslen == 0) continue;
+                char *lower_dir = malloc(dslen + 1);
+                if (!lower_dir) continue;
+                for (size_t j = 0; j < dslen; j++)
+                    lower_dir[j] = (char)tolower((unsigned char)path[s + j]);
+                lower_dir[dslen] = '\0';
+
+                if (tt_hashmap_has(dir_map, lower_dir))
+                    tt_hashmap_set(dir_map, lower_dir, (void *)"");
+                else
+                    tt_hashmap_set(dir_map, lower_dir, file_paths[i]);
+                free(lower_dir);
+            }
+        }
+    }
+
+    /* Step 2: Read all unresolved imports */
+    sqlite3_stmt *imp_stmt = NULL;
+    if (prepare(db,
+                "SELECT id, source_file, target_name FROM imports "
+                "WHERE resolved_file = ''",
+                &imp_stmt) < 0)
+    {
+        tt_hashmap_free(exact_map);
+        tt_hashmap_free(suffix_map);
+        tt_hashmap_free(dir_map);
+        for (int i = 0; i < file_count; i++) free(file_paths[i]);
+        free(file_paths);
+        return -1;
+    }
+
+    /* Prepare update statement */
+    sqlite3_stmt *upd_stmt = NULL;
+    if (prepare(db,
+                "UPDATE imports SET resolved_file = ? WHERE id = ?",
+                &upd_stmt) < 0)
+    {
+        sqlite3_finalize(imp_stmt);
+        tt_hashmap_free(exact_map);
+        tt_hashmap_free(suffix_map);
+        tt_hashmap_free(dir_map);
+        for (int i = 0; i < file_count; i++) free(file_paths[i]);
+        free(file_paths);
+        return -1;
+    }
+
+    sqlite3_exec(db, "BEGIN", NULL, NULL, NULL);
+
+    int resolved_count = 0;
+    while (sqlite3_step(imp_stmt) == SQLITE_ROW)
+    {
+        int imp_id = sqlite3_column_int(imp_stmt, 0);
+        const char *source = (const char *)sqlite3_column_text(imp_stmt, 1);
+        const char *target = (const char *)sqlite3_column_text(imp_stmt, 2);
+        if (!target || !target[0]) continue;
+
+        const char *resolved = NULL;
+
+        /* Strategy 1: Direct exact match (C/C++ includes, etc.) */
+        if (tt_hashmap_has(exact_map, target))
+        {
+            resolved = (const char *)tt_hashmap_get(exact_map, target);
+        }
+
+        /* Strategy 2: Relative path resolution (JS/TS/Ruby ./ ../) */
+        char *rel_resolved = NULL;
+        if (!resolved && source && (target[0] == '.' && (target[1] == '/' ||
+            (target[1] == '.' && target[2] == '/'))))
+        {
+            rel_resolved = resolve_relative(source, target);
+            if (rel_resolved)
+            {
+                /* Try exact match */
+                if (tt_hashmap_has(exact_map, rel_resolved))
+                {
+                    resolved = (const char *)tt_hashmap_get(exact_map, rel_resolved);
+                }
+                else
+                {
+                    /* Try with extensions */
+                    size_t rlen = strlen(rel_resolved);
+                    char *probe = malloc(rlen + 8);
+                    if (probe)
+                    {
+                        for (int e = 0; RESOLVE_EXTENSIONS[e] && !resolved; e++)
+                        {
+                            size_t elen = strlen(RESOLVE_EXTENSIONS[e]);
+                            memcpy(probe, rel_resolved, rlen);
+                            memcpy(probe + rlen, RESOLVE_EXTENSIONS[e], elen + 1);
+                            if (tt_hashmap_has(exact_map, probe))
+                                resolved = (const char *)tt_hashmap_get(exact_map, probe);
+                        }
+                        /* Try /index.{ext} */
+                        if (!resolved)
+                        {
+                            char *idx_probe = malloc(rlen + 16);
+                            if (idx_probe)
+                            {
+                                static const char *idx_exts[] = {
+                                    "/index.ts", "/index.js", "/index.tsx",
+                                    "/index.jsx", "/index.py", NULL
+                                };
+                                for (int e = 0; idx_exts[e] && !resolved; e++)
+                                {
+                                    size_t elen = strlen(idx_exts[e]);
+                                    memcpy(idx_probe, rel_resolved, rlen);
+                                    memcpy(idx_probe + rlen, idx_exts[e], elen + 1);
+                                    if (tt_hashmap_has(exact_map, idx_probe))
+                                        resolved = (const char *)tt_hashmap_get(exact_map, idx_probe);
+                                }
+                                free(idx_probe);
+                            }
+                        }
+                        free(probe);
+                    }
+                }
+            }
+        }
+
+        /* Strategy 2.5: Same-directory resolution (C/C++ #include "file.h")
+         * For targets without path separators, try resolving relative to the
+         * source file's directory. */
+        if (!resolved && source && !strchr(target, '/') && !strchr(target, '\\'))
+        {
+            const char *src_slash = strrchr(source, '/');
+            if (src_slash)
+            {
+                size_t dir_len = (size_t)(src_slash - source) + 1;
+                size_t tlen = strlen(target);
+                char *same_dir = malloc(dir_len + tlen + 1);
+                if (same_dir)
+                {
+                    memcpy(same_dir, source, dir_len);
+                    memcpy(same_dir + dir_len, target, tlen + 1);
+                    if (tt_hashmap_has(exact_map, same_dir))
+                        resolved = (const char *)tt_hashmap_get(exact_map, same_dir);
+                    if (!resolved)
+                    {
+                        /* Try with extensions */
+                        char *probe = malloc(dir_len + tlen + 8);
+                        if (probe)
+                        {
+                            for (int e = 0; RESOLVE_EXTENSIONS[e] && !resolved; e++)
+                            {
+                                size_t elen = strlen(RESOLVE_EXTENSIONS[e]);
+                                memcpy(probe, same_dir, dir_len + tlen);
+                                memcpy(probe + dir_len + tlen, RESOLVE_EXTENSIONS[e], elen + 1);
+                                if (tt_hashmap_has(exact_map, probe))
+                                    resolved = (const char *)tt_hashmap_get(exact_map, probe);
+                            }
+                            free(probe);
+                        }
+                    }
+                    free(same_dir);
+                }
+            }
+        }
+
+        /* Strategy 3: Normalize separators + suffix match */
+        if (!resolved)
+        {
+            char normalized[512];
+            normalize_specifier(target, normalized, sizeof(normalized));
+            size_t nlen = strlen(normalized);
+
+            /* Lowercase for suffix map lookup */
+            char lower[512];
+            for (size_t j = 0; j <= nlen && j < sizeof(lower) - 1; j++)
+                lower[j] = (char)tolower((unsigned char)normalized[j]);
+            lower[nlen < sizeof(lower) - 1 ? nlen : sizeof(lower) - 1] = '\0';
+
+            /* Try suffix map (without extension) */
+            if (tt_hashmap_has(suffix_map, lower))
+            {
+                const char *v = (const char *)tt_hashmap_get(suffix_map, lower);
+                if (v && v[0]) resolved = v; /* non-empty = unambiguous */
+            }
+
+            /* Try suffix map with extensions */
+            if (!resolved)
+            {
+                char probe[520];
+                for (int e = 0; RESOLVE_EXTENSIONS[e] && !resolved; e++)
+                {
+                    size_t elen = strlen(RESOLVE_EXTENSIONS[e]);
+                    if (nlen + elen >= sizeof(probe)) continue;
+                    memcpy(probe, lower, nlen);
+                    for (size_t j = 0; j <= elen; j++)
+                        probe[nlen + j] = (char)tolower((unsigned char)RESOLVE_EXTENSIONS[e][j]);
+                    if (tt_hashmap_has(suffix_map, probe))
+                    {
+                        const char *v = (const char *)tt_hashmap_get(suffix_map, probe);
+                        if (v && v[0]) resolved = v;
+                    }
+                }
+            }
+
+            /* Try __init__.py for Python modules */
+            if (!resolved && nlen + 13 < sizeof(lower))
+            {
+                char py_init[530];
+                snprintf(py_init, sizeof(py_init), "%s/__init__.py", lower);
+                if (tt_hashmap_has(suffix_map, py_init))
+                {
+                    const char *v = (const char *)tt_hashmap_get(suffix_map, py_init);
+                    if (v && v[0]) resolved = v;
+                }
+            }
+
+            /* Strategy 3b: Progressive prefix stripping.
+             * For namespace/package imports (PHP: App\Service\UserService,
+             * Java: com.example.service.OrderService), the full normalized
+             * path doesn't match but a suffix does. Strip leading components
+             * progressively and retry. */
+            if (!resolved)
+            {
+                for (size_t s = 0; s < nlen && !resolved; s++)
+                {
+                    if (lower[s] != '/') continue;
+                    const char *sub = lower + s + 1;
+                    if (!*sub) continue;
+                    size_t sub_len = nlen - s - 1;
+
+                    /* Try suffix map (without extension) */
+                    if (tt_hashmap_has(suffix_map, sub))
+                    {
+                        const char *v = (const char *)tt_hashmap_get(suffix_map, sub);
+                        if (v && v[0]) { resolved = v; break; }
+                    }
+
+                    /* Try with extensions */
+                    char probe[520];
+                    for (int e = 0; RESOLVE_EXTENSIONS[e] && !resolved; e++)
+                    {
+                        size_t elen = strlen(RESOLVE_EXTENSIONS[e]);
+                        if (sub_len + elen >= sizeof(probe)) continue;
+                        memcpy(probe, sub, sub_len);
+                        for (size_t j = 0; j <= elen; j++)
+                            probe[sub_len + j] = (char)tolower(
+                                (unsigned char)RESOLVE_EXTENSIONS[e][j]);
+                        if (tt_hashmap_has(suffix_map, probe))
+                        {
+                            const char *v = (const char *)tt_hashmap_get(
+                                suffix_map, probe);
+                            if (v && v[0]) { resolved = v; break; }
+                        }
+                    }
+                }
+            }
+        }
+
+        /* Strategy 4: Directory-level matching (Go module paths, C# namespaces).
+         * If target resolves to a directory rather than a file, map it to a file
+         * in that directory. Tries the raw target first, then normalized, then
+         * progressive prefix stripping on both. */
+        if (!resolved)
+        {
+            /* Try raw target lowered */
+            size_t tlen = strlen(target);
+            char raw_lower[512];
+            for (size_t j = 0; j < tlen && j < sizeof(raw_lower) - 1; j++)
+                raw_lower[j] = (char)tolower((unsigned char)target[j]);
+            raw_lower[tlen < sizeof(raw_lower) - 1 ? tlen : sizeof(raw_lower) - 1] = '\0';
+
+            if (tt_hashmap_has(dir_map, raw_lower))
+            {
+                const char *v = (const char *)tt_hashmap_get(dir_map, raw_lower);
+                if (v && v[0]) resolved = v;
+            }
+
+            /* Try normalized target as directory */
+            if (!resolved)
+            {
+                char normalized[512];
+                normalize_specifier(target, normalized, sizeof(normalized));
+                size_t nlen2 = strlen(normalized);
+                char lower2[512];
+                for (size_t j = 0; j < nlen2 && j < sizeof(lower2) - 1; j++)
+                    lower2[j] = (char)tolower((unsigned char)normalized[j]);
+                lower2[nlen2 < sizeof(lower2) - 1 ? nlen2 : sizeof(lower2) - 1] = '\0';
+
+                if (tt_hashmap_has(dir_map, lower2))
+                {
+                    const char *v = (const char *)tt_hashmap_get(dir_map, lower2);
+                    if (v && v[0]) resolved = v;
+                }
+
+                /* Progressive prefix stripping on directory map */
+                if (!resolved)
+                {
+                    for (size_t s = 0; s < nlen2 && !resolved; s++)
+                    {
+                        if (lower2[s] != '/') continue;
+                        const char *sub = lower2 + s + 1;
+                        if (!*sub) continue;
+                        if (tt_hashmap_has(dir_map, sub))
+                        {
+                            const char *v = (const char *)tt_hashmap_get(dir_map, sub);
+                            if (v && v[0]) { resolved = v; break; }
+                        }
+                    }
+                }
+            }
+        }
+
+        /* Update resolved_file if we found a match */
+        if (resolved && resolved[0])
+        {
+            sqlite3_bind_text(upd_stmt, 1, resolved, -1, SQLITE_TRANSIENT);
+            sqlite3_bind_int(upd_stmt, 2, imp_id);
+            sqlite3_step(upd_stmt);
+            sqlite3_reset(upd_stmt);
+            resolved_count++;
+        }
+
+        free(rel_resolved);
+    }
+
+    sqlite3_exec(db, "COMMIT", NULL, NULL, NULL);
+
+    sqlite3_finalize(imp_stmt);
+    sqlite3_finalize(upd_stmt);
+    tt_hashmap_free(exact_map);
+    tt_hashmap_free(suffix_map);
+    tt_hashmap_free(dir_map);
+    for (int i = 0; i < file_count; i++) free(file_paths[i]);
+    free(file_paths);
+
+    return 0;
+}
+
 static tt_import_t *read_import_rows(sqlite3_stmt *stmt, int *out_count)
 {
     tt_array_t results;
@@ -1562,23 +2235,73 @@ int tt_store_get_importers(tt_index_store_t *store, const char *file_path,
     sqlite3_stmt *stmt = NULL;
     if (prepare(store->db->db,
                 "SELECT source_file, target_name, kind, import_type "
-                "FROM imports WHERE target_name = ? OR target_name LIKE ? OR target_name = ?",
+                "FROM imports WHERE resolved_file = ?",
                 &stmt) < 0)
         return -1;
 
-    /* Match exact, suffix (%file_path), or basename of file_path */
-    char like_pattern[512];
-    snprintf(like_pattern, sizeof(like_pattern), "%%%s", file_path);
-
-    const char *basename = strrchr(file_path, '/');
-    basename = basename ? basename + 1 : file_path;
-
     sqlite3_bind_text(stmt, 1, file_path, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 2, like_pattern, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 3, basename, -1, SQLITE_TRANSIENT);
 
     *out = read_import_rows(stmt, out_count);
     sqlite3_finalize(stmt);
+    return 0;
+}
+
+int tt_store_count_importers(tt_index_store_t *store, const char *file_path)
+{
+    if (!store || !store->db || !file_path || !file_path[0]) return 0;
+
+    sqlite3_stmt *stmt = NULL;
+    if (prepare(store->db->db,
+                "SELECT COUNT(*) FROM imports WHERE resolved_file = ?",
+                &stmt) < 0)
+        return 0;
+
+    sqlite3_bind_text(stmt, 1, file_path, -1, SQLITE_TRANSIENT);
+
+    int count = 0;
+    if (sqlite3_step(stmt) == SQLITE_ROW)
+        count = sqlite3_column_int(stmt, 0);
+    sqlite3_finalize(stmt);
+    return count;
+}
+
+int tt_store_get_imports_of(tt_index_store_t *store, const char *file_path,
+                             char ***out_files, int *out_count)
+{
+    *out_files = NULL;
+    *out_count = 0;
+    if (!store || !store->db || !file_path || !file_path[0]) return 0;
+
+    sqlite3_stmt *stmt = NULL;
+    if (prepare(store->db->db,
+                "SELECT DISTINCT resolved_file FROM imports "
+                "WHERE source_file = ? AND resolved_file != ''",
+                &stmt) < 0)
+        return -1;
+
+    sqlite3_bind_text(stmt, 1, file_path, -1, SQLITE_TRANSIENT);
+
+    int cap = 32, n = 0;
+    char **files = malloc((size_t)cap * sizeof(char *));
+    if (!files) { sqlite3_finalize(stmt); return -1; }
+
+    while (sqlite3_step(stmt) == SQLITE_ROW)
+    {
+        const char *t = (const char *)sqlite3_column_text(stmt, 0);
+        if (!t) continue;
+        if (n >= cap)
+        {
+            cap *= 2;
+            char **tmp = realloc(files, (size_t)cap * sizeof(char *));
+            if (!tmp) break;
+            files = tmp;
+        }
+        files[n++] = tt_strdup(t);
+    }
+    sqlite3_finalize(stmt);
+
+    *out_files = files;
+    *out_count = n;
     return 0;
 }
 
@@ -1828,21 +2551,15 @@ int tt_store_get_dependencies(tt_index_store_t *store,
     if (max_depth > 10)
         max_depth = 10;
 
-    const char *basename = strrchr(file_path, '/');
-    basename = basename ? basename + 1 : file_path;
-
-    char like_pattern[512];
-    snprintf(like_pattern, sizeof(like_pattern), "%%%s", file_path);
-
     static const char *SQL_DEPS =
         "WITH RECURSIVE dep_graph(file, depth) AS ("
         "    SELECT source_file, 0 FROM imports"
-        "    WHERE target_name = ?1 OR target_name LIKE ?2 OR target_name = ?3"
+        "    WHERE resolved_file = ?1"
         "    UNION"
         "    SELECT i.source_file, d.depth + 1"
         "    FROM imports i JOIN dep_graph d"
-        "    ON (i.target_name LIKE '%%/' || d.file OR i.target_name = d.file)"
-        "    WHERE d.depth < ?4"
+        "    ON i.resolved_file = d.file"
+        "    WHERE d.depth < ?2"
         ")"
         "SELECT DISTINCT file, MIN(depth) as depth"
         " FROM dep_graph GROUP BY file ORDER BY depth, file";
@@ -1852,9 +2569,7 @@ int tt_store_get_dependencies(tt_index_store_t *store,
         return -1;
 
     sqlite3_bind_text(stmt, 1, file_path, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 2, like_pattern, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 3, basename, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int(stmt, 4, max_depth);
+    sqlite3_bind_int(stmt, 2, max_depth);
 
     tt_array_t results;
     tt_array_init(&results);
@@ -2175,4 +2890,77 @@ int tt_store_search_similar(tt_index_store_t *store,
     }
     free(raw.results);
     return 0;
+}
+
+/* ---- Centrality ---- */
+
+int tt_store_compute_centrality(tt_index_store_t *store)
+{
+    sqlite3 *db = store->db->db;
+
+    /* Clear existing scores */
+    char *errmsg = NULL;
+    int rc = sqlite3_exec(db, "DELETE FROM file_centrality;", NULL, NULL, &errmsg);
+    if (rc != SQLITE_OK) {
+        sqlite3_free(errmsg);
+        return -1;
+    }
+
+    /* Count distinct importers per resolved target file */
+    const char *sql =
+        "SELECT resolved_file, COUNT(DISTINCT source_file) "
+        "FROM imports WHERE resolved_file != '' GROUP BY resolved_file";
+    sqlite3_stmt *stmt = NULL;
+    rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK)
+        return -1;
+
+    /* Insert centrality scores */
+    const char *insert_sql =
+        "INSERT OR REPLACE INTO file_centrality (file, score) VALUES (?, ?)";
+    sqlite3_stmt *ins = NULL;
+    rc = sqlite3_prepare_v2(db, insert_sql, -1, &ins, NULL);
+    if (rc != SQLITE_OK) {
+        sqlite3_finalize(stmt);
+        return -1;
+    }
+
+    sqlite3_exec(db, "BEGIN", NULL, NULL, NULL);
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const char *target = (const char *)sqlite3_column_text(stmt, 0);
+        int count = sqlite3_column_int(stmt, 1);
+        double score = log(1.0 + count);
+
+        sqlite3_bind_text(ins, 1, target, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_double(ins, 2, score);
+        sqlite3_step(ins);
+        sqlite3_reset(ins);
+    }
+    sqlite3_exec(db, "COMMIT", NULL, NULL, NULL);
+
+    sqlite3_finalize(stmt);
+    sqlite3_finalize(ins);
+    return 0;
+}
+
+tt_hashmap_t *tt_store_load_centrality(tt_index_store_t *store)
+{
+    sqlite3 *db = store->db->db;
+    tt_hashmap_t *map = tt_hashmap_new(256);
+    if (!map) return NULL;
+
+    const char *sql = "SELECT file, score FROM file_centrality";
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK)
+        return map;
+
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const char *file = (const char *)sqlite3_column_text(stmt, 0);
+        double score = sqlite3_column_double(stmt, 1);
+        /* Encode score * 1000 as intptr_t to store in hashmap */
+        intptr_t encoded = (intptr_t)(score * 1000.0);
+        tt_hashmap_set(map, file, (void *)encoded);
+    }
+    sqlite3_finalize(stmt);
+    return map;
 }

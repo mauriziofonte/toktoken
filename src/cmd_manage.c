@@ -153,6 +153,28 @@ cJSON *tt_cmd_stats_exec(tt_cli_opts_t *opts)
                                 (double)totals.total_response_bytes);
         cJSON_AddNumberToObject(savings_json, "total_tokens_saved",
                                 (double)totals.total_tokens_saved);
+
+        /* Per-tool breakdown */
+        tt_savings_per_tool_t *per_tool = NULL;
+        int per_tool_count = 0;
+        if (tt_savings_get_per_tool(&db, &per_tool, &per_tool_count) == 0
+            && per_tool_count > 0)
+        {
+            cJSON *pt_arr = cJSON_CreateArray();
+            for (int i = 0; i < per_tool_count; i++)
+            {
+                cJSON *entry = cJSON_CreateObject();
+                cJSON_AddStringToObject(entry, "tool", per_tool[i].tool_name);
+                cJSON_AddNumberToObject(entry, "calls",
+                                        (double)per_tool[i].call_count);
+                cJSON_AddNumberToObject(entry, "tokens_saved",
+                                        (double)per_tool[i].tokens_saved);
+                cJSON_AddItemToArray(pt_arr, entry);
+            }
+            cJSON_AddItemToObject(savings_json, "per_tool", pt_arr);
+            tt_savings_free_per_tool(per_tool, per_tool_count);
+        }
+
         cJSON_AddItemToObject(result, "savings", savings_json);
     }
 

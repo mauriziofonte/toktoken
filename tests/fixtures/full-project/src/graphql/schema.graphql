@@ -1,0 +1,111 @@
+scalar DateTime
+
+interface Node {
+  id: ID!
+  createdAt: DateTime!
+}
+
+enum Role {
+  ADMIN
+  EDITOR
+  VIEWER
+  GUEST
+}
+
+enum OrderStatus {
+  PENDING
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+type User implements Node {
+  id: ID!
+  createdAt: DateTime!
+  email: String!
+  name: String!
+  role: Role!
+  posts: [Post!]!
+  orders: [Order!]!
+  avatar: String
+}
+
+type Post implements Node {
+  id: ID!
+  createdAt: DateTime!
+  title: String!
+  content: String!
+  published: Boolean!
+  author: User!
+  tags: [String!]!
+  comments: [Comment!]!
+}
+
+type Comment implements Node {
+  id: ID!
+  createdAt: DateTime!
+  body: String!
+  author: User!
+  post: Post!
+}
+
+type Order implements Node {
+  id: ID!
+  createdAt: DateTime!
+  status: OrderStatus!
+  total: Float!
+  items: [OrderItem!]!
+  customer: User!
+}
+
+type OrderItem {
+  product: String!
+  quantity: Int!
+  price: Float!
+}
+
+union SearchResult = User | Post | Comment
+
+input CreatePostInput {
+  title: String!
+  content: String!
+  tags: [String!]
+  published: Boolean = false
+}
+
+input UpdateUserInput {
+  name: String
+  email: String
+  role: Role
+}
+
+type Query {
+  user(id: ID!): User
+  users(limit: Int = 20, offset: Int = 0): [User!]!
+  post(id: ID!): Post
+  posts(published: Boolean, limit: Int = 20): [Post!]!
+  search(query: String!, limit: Int = 10): [SearchResult!]!
+  order(id: ID!): Order
+}
+
+type Mutation {
+  createUser(email: String!, name: String!, role: Role = VIEWER): User!
+  updateUser(id: ID!, input: UpdateUserInput!): User!
+  deleteUser(id: ID!): Boolean!
+  createPost(input: CreatePostInput!): Post!
+  publishPost(id: ID!): Post!
+  addComment(postId: ID!, body: String!): Comment!
+  createOrder(userId: ID!, items: [OrderItemInput!]!): Order!
+}
+
+input OrderItemInput {
+  product: String!
+  quantity: Int!
+  price: Float!
+}
+
+type Subscription {
+  postPublished: Post!
+  orderStatusChanged(orderId: ID!): Order!
+}

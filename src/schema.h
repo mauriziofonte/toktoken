@@ -10,7 +10,7 @@
 
 #include <sqlite3.h>
 
-#define TT_SCHEMA_VERSION 3
+#define TT_SCHEMA_VERSION 4
 
 /*
  * tt_schema_create -- Create all tables, indexes, triggers from scratch.

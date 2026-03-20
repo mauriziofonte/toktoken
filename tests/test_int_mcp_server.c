@@ -382,7 +382,7 @@ TT_TEST(test_int_mcp_tools_list)
     cJSON *result = cJSON_GetObjectItemCaseSensitive(resp, "result");
     cJSON *tools = cJSON_GetObjectItemCaseSensitive(result, "tools");
     TT_ASSERT_TRUE(cJSON_IsArray(tools));
-    TT_ASSERT_EQ_INT(cJSON_GetArraySize(tools), 21);
+    TT_ASSERT_EQ_INT(cJSON_GetArraySize(tools), 26);
 
     /* Check expected tool names */
     const char *expected_names[] = {
@@ -392,9 +392,11 @@ TT_TEST(test_int_mcp_tools_list)
         "stats", "projects_list", "cache_clear",
         "index_github", "inspect_bundle", "find_importers", "find_references",
         "find_callers", "search_cooccurrence", "search_similar",
-        "inspect_dependencies", "inspect_hierarchy"};
+        "inspect_dependencies", "inspect_hierarchy",
+        "inspect_cycles", "inspect_blast_radius", "find_dead", "index_file",
+        "help"};
 
-    for (int i = 0; i < 21; i++)
+    for (int i = 0; i < 26; i++)
     {
         cJSON *tool = cJSON_GetArrayItem(tools, i);
         const char *tname = cJSON_GetStringValue(
@@ -687,7 +689,7 @@ TT_TEST(test_int_mcp_stdio_lifecycle)
     TT_ASSERT_NOT_NULL(resp);
     cJSON *result = cJSON_GetObjectItemCaseSensitive(resp, "result");
     cJSON *tools = cJSON_GetObjectItemCaseSensitive(result, "tools");
-    TT_ASSERT_EQ_INT(cJSON_GetArraySize(tools), 21);
+    TT_ASSERT_EQ_INT(cJSON_GetArraySize(tools), 26);
     cJSON_Delete(resp);
 
     /* ping */

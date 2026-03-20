@@ -20,6 +20,7 @@
 #include "config.h"
 #include "thread_pool.h"
 #include "diagnostic.h"
+#include "fast_hash.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -333,6 +334,7 @@ cJSON *tt_cmd_index_create_exec(tt_cli_opts_t *opts)
     }
 
     free(ctags_path);
+    TT_DIAG_MEM(); /* Capture post-pipeline RSS before memory is freed */
     uint64_t t_pipeline_done = tt_monotonic_ms();
     TT_DIAG("pipeline", "done",
             "\"files\":%d,\"syms\":%d,\"errors\":%d,\"dur_ms\":%llu",
@@ -372,8 +374,18 @@ cJSON *tt_cmd_index_create_exec(tt_cli_opts_t *opts)
         TT_DIAG("schema", "fts_triggers",
                 "\"dur_ms\":%llu", (unsigned long long)(t3 - t2));
 
+        tt_store_resolve_imports(&store);
+        uint64_t t4 = tt_monotonic_ms();
+        TT_DIAG("schema", "resolve_imports",
+                "\"dur_ms\":%llu", (unsigned long long)(t4 - t3));
+
+        tt_store_compute_centrality(&store);
+        uint64_t t5 = tt_monotonic_ms();
+        TT_DIAG("schema", "centrality",
+                "\"dur_ms\":%llu", (unsigned long long)(t5 - t4));
+
         TT_DIAG("schema", "done",
-                "\"dur_ms\":%llu", (unsigned long long)(t3 - t0));
+                "\"dur_ms\":%llu", (unsigned long long)(t5 - t0));
     }
 
     set_metadata(&store, project_path);
@@ -429,6 +441,9 @@ cJSON *tt_cmd_index_create_exec(tt_cli_opts_t *opts)
         cJSON_AddItemToObject(result, "timing", timing);
     }
 
+    /* Capture RSS after schema rebuild, before reporting peak */
+    TT_DIAG_MEM();
+
     /* Final diagnostic summary */
     TT_DIAG("done", "summary",
             "\"dur_s\":%.2f,\"peak_rss_kb\":%llu,"
@@ -436,7 +451,6 @@ cJSON *tt_cmd_index_create_exec(tt_cli_opts_t *opts)
             tt_timer_elapsed_sec(),
             (unsigned long long)tt_diag_peak_rss_kb(),
             stats.files, (int)stats.symbols, presult.errors_count);
-    TT_DIAG_MEM();
 
     /* Cleanup */
     tt_pipeline_result_free(&presult);
@@ -766,6 +780,15 @@ cJSON *tt_cmd_index_update_exec(tt_cli_opts_t *opts)
             files_to_reindex[idx++] = changes.added[i];
     }
 
+    /* Decide incremental vs bulk mode.
+     * Incremental: keep FTS triggers active, update in O(changed_symbols).
+     * Bulk: drop triggers/indexes, rebuild from scratch in O(total_symbols).
+     * Threshold: incremental when affected files < 10% of total indexed. */
+    int total_affected = files_to_reindex_count + changes.deleted_count;
+    bool use_incremental = (discovered.count > 0 &&
+                            total_affected <= discovered.count / 10);
+    bool imports_changed = false;
+
     /* Bulk indexing PRAGMAs: larger cache + in-memory temp store */
     sqlite3_exec(db.db, "PRAGMA cache_size=-32000", NULL, NULL, NULL);
     sqlite3_exec(db.db, "PRAGMA temp_store=MEMORY", NULL, NULL, NULL);
@@ -786,6 +809,7 @@ cJSON *tt_cmd_index_update_exec(tt_cli_opts_t *opts)
         pcfg.max_file_size_bytes = config.max_file_size_kb * 1024;
         pcfg.db = &db;
         pcfg.store = &store;
+        pcfg.incremental = use_incremental;
 
         tt_progress("Updating %d changed/new files...\n", files_to_reindex_count);
 
@@ -830,18 +854,26 @@ cJSON *tt_cmd_index_update_exec(tt_cli_opts_t *opts)
 
         tt_pipeline_result_t presult;
         tt_pipeline_join(handle, &presult);
+        TT_DIAG_MEM(); /* Capture post-pipeline RSS */
 
         TT_DIAG("pipeline", "done",
-                "\"files\":%d,\"syms\":%d,\"errors\":%d",
+                "\"files\":%d,\"syms\":%d,\"errors\":%d,\"incremental\":%s",
                 presult.files_indexed, presult.symbols_indexed,
-                presult.errors_count);
+                presult.errors_count, use_incremental ? "true" : "false");
 
+        imports_changed = (presult.imports_indexed > 0 ||
+                           changes.deleted_count > 0);
         tt_pipeline_result_free(&presult);
+    }
+    else
+    {
+        /* No files to reindex, but deletions may have removed imports */
+        imports_changed = (changes.deleted_count > 0);
     }
     free(files_to_reindex);
     free(ctags_path);
 
-    /* Phase 4: Summaries run BEFORE index/FTS rebuild (bare tables = fast) */
+    /* Phase 4: Summaries — only for newly inserted symbols (summary = '') */
     TT_DIAG("summary", "start", NULL);
     uint64_t t_upd_sum_start = tt_monotonic_ms();
     tt_apply_sync_summaries(&db);
@@ -850,27 +882,71 @@ cJSON *tt_cmd_index_update_exec(tt_cli_opts_t *opts)
             "\"dur_ms\":%llu",
             (unsigned long long)(tt_monotonic_ms() - t_upd_sum_start));
 
-    /* Rebuild secondary indexes, FTS, and triggers */
+    /* Schema maintenance: skip expensive rebuilds in incremental mode */
     {
         uint64_t t0 = tt_monotonic_ms();
         TT_DIAG("schema", "start", NULL);
-        tt_schema_create_secondary_indexes(db.db);
-        uint64_t t1 = tt_monotonic_ms();
-        TT_DIAG("schema", "secondary_idx",
-                "\"dur_ms\":%llu", (unsigned long long)(t1 - t0));
 
-        tt_schema_rebuild_fts(db.db);
-        uint64_t t2 = tt_monotonic_ms();
-        TT_DIAG("schema", "fts_rebuild",
-                "\"dur_ms\":%llu", (unsigned long long)(t2 - t1));
+        if (use_incremental)
+        {
+            /* Incremental: indexes/triggers were never dropped, FTS was
+             * maintained via triggers. Only recompute centrality if the
+             * import graph changed. */
+            TT_DIAG("schema", "secondary_idx", "\"dur_ms\":0,\"skipped\":true");
+            TT_DIAG("schema", "fts_rebuild", "\"dur_ms\":0,\"skipped\":true");
+            TT_DIAG("schema", "fts_triggers", "\"dur_ms\":0,\"skipped\":true");
 
-        tt_schema_create_fts_triggers(db.db);
-        uint64_t t3 = tt_monotonic_ms();
-        TT_DIAG("schema", "fts_triggers",
-                "\"dur_ms\":%llu", (unsigned long long)(t3 - t2));
+            if (imports_changed)
+            {
+                tt_store_resolve_imports(&store);
+                uint64_t t1 = tt_monotonic_ms();
+                TT_DIAG("schema", "resolve_imports",
+                        "\"dur_ms\":%llu", (unsigned long long)(t1 - t0));
+
+                tt_store_compute_centrality(&store);
+                uint64_t t2 = tt_monotonic_ms();
+                TT_DIAG("schema", "centrality",
+                        "\"dur_ms\":%llu", (unsigned long long)(t2 - t1));
+            }
+            else
+            {
+                TT_DIAG("schema", "centrality",
+                        "\"dur_ms\":0,\"skipped\":true");
+            }
+        }
+        else
+        {
+            /* Bulk mode: full rebuild (same as index:create) */
+            tt_schema_create_secondary_indexes(db.db);
+            uint64_t t1 = tt_monotonic_ms();
+            TT_DIAG("schema", "secondary_idx",
+                    "\"dur_ms\":%llu", (unsigned long long)(t1 - t0));
+
+            tt_schema_rebuild_fts(db.db);
+            uint64_t t2 = tt_monotonic_ms();
+            TT_DIAG("schema", "fts_rebuild",
+                    "\"dur_ms\":%llu", (unsigned long long)(t2 - t1));
+
+            tt_schema_create_fts_triggers(db.db);
+            uint64_t t3 = tt_monotonic_ms();
+            TT_DIAG("schema", "fts_triggers",
+                    "\"dur_ms\":%llu", (unsigned long long)(t3 - t2));
+
+            tt_store_resolve_imports(&store);
+            uint64_t t4 = tt_monotonic_ms();
+            TT_DIAG("schema", "resolve_imports",
+                    "\"dur_ms\":%llu", (unsigned long long)(t4 - t3));
+
+            tt_store_compute_centrality(&store);
+            uint64_t t5 = tt_monotonic_ms();
+            TT_DIAG("schema", "centrality",
+                    "\"dur_ms\":%llu", (unsigned long long)(t5 - t4));
+        }
 
         TT_DIAG("schema", "done",
-                "\"dur_ms\":%llu", (unsigned long long)(t3 - t0));
+                "\"dur_ms\":%llu,\"incremental\":%s",
+                (unsigned long long)(tt_monotonic_ms() - t0),
+                use_incremental ? "true" : "false");
     }
 
     set_metadata(&store, project_path);
@@ -885,6 +961,9 @@ cJSON *tt_cmd_index_update_exec(tt_cli_opts_t *opts)
     cJSON_AddNumberToObject(result, "deleted", changes.deleted_count);
     cJSON_AddNumberToObject(result, "duration_seconds", tt_timer_elapsed_sec());
 
+    /* Capture RSS after schema work, before reporting peak */
+    TT_DIAG_MEM();
+
     /* Final diagnostic summary */
     TT_DIAG("done", "summary",
             "\"dur_s\":%.2f,\"peak_rss_kb\":%llu,"
@@ -892,7 +971,6 @@ cJSON *tt_cmd_index_update_exec(tt_cli_opts_t *opts)
             tt_timer_elapsed_sec(),
             (unsigned long long)tt_diag_peak_rss_kb(),
             changes.changed_count, changes.added_count, changes.deleted_count);
-    TT_DIAG_MEM();
 
     /* Cleanup */
     tt_changes_fast_free(&changes);
@@ -940,6 +1018,205 @@ int tt_cmd_index_create(tt_cli_opts_t *opts)
 int tt_cmd_index_update(tt_cli_opts_t *opts)
 {
     cJSON *result = tt_cmd_index_update_exec(opts);
+    if (!result)
+    {
+        return tt_output_error("internal_error", tt_error_get(), NULL);
+    }
+    if (cJSON_GetObjectItem(result, "error"))
+    {
+        tt_json_print(result);
+        cJSON_Delete(result);
+        return 1;
+    }
+    tt_json_print(result);
+    cJSON_Delete(result);
+    return 0;
+}
+
+/* ---- index:file -- single-file reindex ---- */
+
+cJSON *tt_cmd_index_file_exec(tt_cli_opts_t *opts)
+{
+    tt_timer_start();
+
+    const char *file_arg = NULL;
+    if (opts->positional_count > 0)
+        file_arg = opts->positional[0];
+    else if (opts->search && opts->search[0])
+        file_arg = opts->search;
+
+    if (!file_arg || !file_arg[0])
+        return make_error("missing_argument",
+                          "Usage: index:file <filepath>",
+                          "Specify a file path to reindex");
+
+    char *project_path = tt_resolve_project_path(opts->path);
+    if (!project_path)
+    {
+        tt_error_set("Failed to resolve project path");
+        return NULL;
+    }
+
+    /* Resolve file to relative path within project */
+    size_t root_len = strlen(project_path);
+    const char *rel_path = file_arg;
+
+    /* If absolute path, strip project root prefix */
+    if (file_arg[0] == '/' && strlen(file_arg) > root_len &&
+        memcmp(file_arg, project_path, root_len) == 0 &&
+        file_arg[root_len] == '/')
+    {
+        rel_path = file_arg + root_len + 1;
+    }
+
+    /* Build absolute path for stat/hash */
+    char abs_path[4096];
+    if (file_arg[0] == '/')
+        snprintf(abs_path, sizeof(abs_path), "%s", file_arg);
+    else
+        snprintf(abs_path, sizeof(abs_path), "%s/%s", project_path, rel_path);
+
+    /* Check file exists */
+    struct stat st;
+    if (stat(abs_path, &st) != 0)
+    {
+        free(project_path);
+        return make_error("file_not_found",
+                          "File does not exist",
+                          abs_path);
+    }
+
+    /* Open database (must already exist) */
+    if (!tt_database_exists(project_path))
+    {
+        free(project_path);
+        return make_error("no_index",
+                          "No index found. Run index:create first.",
+                          NULL);
+    }
+
+    tt_database_t db;
+    memset(&db, 0, sizeof(db));
+    if (tt_database_open(&db, project_path) < 0)
+    {
+        free(project_path);
+        return make_error("storage_error",
+                          "Failed to open database.",
+                          NULL);
+    }
+
+    tt_index_store_t store;
+    if (tt_store_init(&store, &db) < 0)
+    {
+        tt_database_close(&db);
+        free(project_path);
+        return make_error("storage_error", "Failed to prepare statements", NULL);
+    }
+
+    /* Hash check: unchanged? */
+    char *new_hash = tt_fast_hash_file(abs_path);
+    if (!new_hash)
+    {
+        tt_store_close(&store);
+        tt_database_close(&db);
+        free(project_path);
+        return make_error("hash_error", "Failed to hash file", abs_path);
+    }
+
+    tt_file_record_t old_rec;
+    memset(&old_rec, 0, sizeof(old_rec));
+    int has_old = (tt_store_get_file(&store, rel_path, &old_rec) == 0);
+    if (has_old && old_rec.hash && strcmp(old_rec.hash, new_hash) == 0)
+    {
+        /* Unchanged */
+        cJSON *result = cJSON_CreateObject();
+        cJSON_AddBoolToObject(result, "changed", false);
+        cJSON_AddStringToObject(result, "file", rel_path);
+        cJSON_AddNumberToObject(result, "duration_seconds",
+                                tt_timer_elapsed_sec());
+
+        tt_file_record_free(&old_rec);
+        free(new_hash);
+        tt_store_close(&store);
+        tt_database_close(&db);
+        free(project_path);
+        return result;
+    }
+    tt_file_record_free(&old_rec);
+    free(new_hash);
+
+    /* Delete old data for this file (cascades to symbols + imports) */
+    if (has_old)
+    {
+        tt_database_begin(&db);
+        tt_store_delete_file(&store, rel_path);
+        tt_database_commit(&db);
+    }
+
+    /* Find ctags */
+    char *ctags_path = tt_ctags_resolve();
+    if (!ctags_path)
+    {
+        tt_store_close(&store);
+        tt_database_close(&db);
+        free(project_path);
+        return make_error("ctags_not_found",
+                          "Universal Ctags not found",
+                          "Install universal-ctags or ensure it is in PATH");
+    }
+
+    /* Run pipeline in incremental mode: keeps FTS triggers active so the
+     * index is updated in O(symbols_in_file) instead of O(total_symbols). */
+    tt_pipeline_config_t pcfg = {0};
+    pcfg.project_root = project_path;
+    pcfg.ctags_path = ctags_path;
+    pcfg.file_paths = &rel_path;
+    pcfg.file_count = 1;
+    pcfg.num_workers = 1;
+    pcfg.ctags_timeout_sec = 30;
+    pcfg.max_file_size_bytes = 10 * 1024 * 1024; /* 10MB */
+    pcfg.db = &db;
+    pcfg.store = &store;
+    pcfg.incremental = true;
+
+    tt_pipeline_result_t presult;
+    if (tt_pipeline_run(&pcfg, &presult) < 0)
+    {
+        free(ctags_path);
+        tt_store_close(&store);
+        tt_database_close(&db);
+        free(project_path);
+        return make_error("pipeline_error",
+                          "Failed to index file", NULL);
+    }
+
+    int syms = presult.symbols_indexed;
+    int imps = presult.imports_indexed;
+    tt_pipeline_result_free(&presult);
+
+    free(ctags_path);
+
+    /* Resolve import specifiers to file paths */
+    if (imps > 0)
+        tt_store_resolve_imports(&store);
+
+    cJSON *result = cJSON_CreateObject();
+    cJSON_AddBoolToObject(result, "changed", true);
+    cJSON_AddStringToObject(result, "file", rel_path);
+    cJSON_AddNumberToObject(result, "symbols", syms);
+    cJSON_AddNumberToObject(result, "imports", imps);
+    cJSON_AddNumberToObject(result, "duration_seconds",
+                            tt_timer_elapsed_sec());
+
+    tt_store_close(&store);
+    tt_database_close(&db);
+    free(project_path);
+    return result;
+}
+
+int tt_cmd_index_file(tt_cli_opts_t *opts)
+{
+    cJSON *result = tt_cmd_index_file_exec(opts);
     if (!result)
     {
         return tt_output_error("internal_error", tt_error_get(), NULL);

@@ -12,7 +12,7 @@ Real-world performance data measured on eight open-source codebases spanning C, 
 | RAM | 32 GiB DDR5 |
 | OS | Linux 6.6.87 (Ubuntu 24.04 on WSL2) |
 | Storage | NVMe SSD |
-| TokToken | v1.0.0 (C11, compiled with `-O2`) |
+| TokToken | v0.2.0 (C11, compiled with `-O2`) |
 | ctags | Universal Ctags 5.9.0 |
 | Compiler | GCC 13.3.0 |
 
@@ -24,16 +24,16 @@ Eight well-known open-source projects spanning seven languages:
 
 | Codebase | Description | Total files | Indexed files | Symbols | Primary languages |
 |----------|-------------|-------------|---------------|---------|-------------------|
-| **Redis** | C in-memory database | 1,746 | 727 | 45,593 | C, C++, Python |
+| **Redis** | C in-memory database | 1,746 | 727 | 45,596 | C, C++, Python |
 | **curl** | C networking library | 4,216 | 1,108 | 33,973 | C, C++, Python |
-| **Laravel** | PHP framework | 3,090 | 2,783 | 39,145 | PHP |
-| **Django** | Python web framework | 7,024 | 2,945 | 93,035 | Python, JavaScript |
+| **Laravel** | PHP framework | 3,090 | 2,783 | 39,188 | PHP |
 | **Neovim** | C/Lua text editor | 3,777 | 3,297 | 56,663 | C, Vim, Lua |
+| **Django** | Python web framework | 7,024 | 2,945 | 93,254 | Python, JavaScript |
 | **Kubernetes** | Go container orchestration | 28,482 | 12,881 | 294,753 | Go |
-| **dotnet/runtime** | C# runtime + libraries | 57,006 | 37,668 | 1,241,380 | C#, C, C++ |
+| **dotnet/runtime** | C# runtime + libraries | 57,006 | 37,668 | 1,241,626 | C#, C, C++ |
 | **Linux kernel** | OS kernel | 92,931 | 65,231 | 7,433,275 | C, Assembly |
 
-**Total: 198,272 files on disk, 126,640 indexed, 9,237,817 symbols across 8 projects.**
+**Total: 198,272 files on disk, 126,640 indexed, 9,244,328 symbols across 8 projects.**
 
 The smart filter (enabled by default) excluded vendored dependencies, test fixtures, documentation, and non-code files. "Total files" includes everything on disk (minus `.git/`); "Indexed files" reflects what passes discovery and language detection.
 
@@ -47,16 +47,16 @@ Each codebase was indexed from scratch with `--max-files 500000` and `--diagnost
 
 | Codebase | Files | Symbols | Wall time | Throughput | Symbol density |
 |----------|-------|---------|-----------|------------|----------------|
-| **curl** | 1,108 | 33,973 | **0.81 s** | 1,368 files/s | 30.7 sym/file |
-| **Redis** | 727 | 45,593 | **0.88 s** | 826 files/s | 62.7 sym/file |
-| **Neovim** | 3,297 | 56,663 | **0.94 s** | 3,508 files/s | 17.2 sym/file |
-| **Laravel** | 2,783 | 39,145 | **1.44 s** | 1,933 files/s | 14.1 sym/file |
-| **Django** | 2,945 | 93,035 | **1.74 s** | 1,692 files/s | 31.6 sym/file |
-| **Kubernetes** | 12,881 | 294,753 | **6.13 s** | 2,101 files/s | 22.9 sym/file |
-| **dotnet/runtime** | 37,668 | 1,241,380 | **28.40 s** | 1,326 files/s | 33.0 sym/file |
-| **Linux kernel** | 65,231 | 7,433,275 | **130.29 s** | 501 files/s | 114.0 sym/file |
+| **curl** | 1,108 | 33,973 | **0.80 s** | 1,383 files/s | 30.7 sym/file |
+| **Redis** | 727 | 45,596 | **0.88 s** | 828 files/s | 62.7 sym/file |
+| **Neovim** | 3,297 | 56,663 | **0.97 s** | 3,385 files/s | 17.2 sym/file |
+| **Laravel** | 2,783 | 39,188 | **1.02 s** | 2,717 files/s | 14.1 sym/file |
+| **Django** | 2,945 | 93,254 | **2.15 s** | 1,368 files/s | 31.7 sym/file |
+| **Kubernetes** | 12,881 | 294,753 | **10.13 s** | 1,272 files/s | 22.9 sym/file |
+| **dotnet/runtime** | 37,668 | 1,241,626 | **33.47 s** | 1,125 files/s | 33.0 sym/file |
+| **Linux kernel** | 65,231 | 7,433,275 | **171.17 s** | 381 files/s | 114.0 sym/file |
 
-Small-to-medium projects (< 3,000 files) index in under 2 seconds. Kubernetes (13K files) takes 6 seconds. The Linux kernel with 65K files and 7.4M symbols indexes in 130 seconds.
+Small-to-medium projects (< 3,000 files) index in under 2 seconds. Kubernetes (13K files) takes 10 seconds. The Linux kernel with 65K files and 7.4M symbols indexes in under 3 minutes.
 
 Redis has the highest symbol density among small projects (62.7 sym/file), which explains its relatively lower throughput. The Linux kernel's extreme density (114 sym/file across 65K files) drives its indexing time.
 
@@ -66,44 +66,44 @@ Where time is spent during indexing:
 
 | Codebase | Discovery | Pipeline | Summaries | Schema rebuild | Total |
 |----------|-----------|----------|-----------|----------------|-------|
-| **curl** | 21 ms | 528 ms | 110 ms | 109 ms | 0.80 s |
-| **Redis** | 17 ms | 518 ms | 151 ms | 154 ms | 0.87 s |
-| **Neovim** | 41 ms | 528 ms | 149 ms | 179 ms | 0.93 s |
-| **Laravel** | 26 ms | 1,024 ms | 173 ms | 166 ms | 1.44 s |
-| **Django** | 104 ms | 1,024 ms | 248 ms | 308 ms | 1.73 s |
-| **Kubernetes** | 301 ms | 3,021 ms | 1,280 ms | 1,393 ms | 6.11 s |
-| **dotnet/runtime** | 3,274 ms | 11,537 ms | 6,289 ms | 6,866 ms | 28.37 s |
-| **Linux kernel** | 2,166 ms | 57,571 ms | 30,654 ms | 37,881 ms | 130.18 s |
+| **curl** | 32 ms | 517 ms | 86 ms | 109 ms | 0.80 s |
+| **Redis** | 14 ms | 519 ms | 128 ms | 158 ms | 0.88 s |
+| **Neovim** | 69 ms | 525 ms | 100 ms | 201 ms | 0.97 s |
+| **Laravel** | 90 ms | 519 ms | 129 ms | 217 ms | 1.02 s |
+| **Django** | 485 ms | 1,017 ms | 174 ms | 362 ms | 2.15 s |
+| **Kubernetes** | 813 ms | 3,520 ms | 1,302 ms | 2,197 ms | 10.13 s |
+| **dotnet/runtime** | 4,523 ms | 13,528 ms | 4,588 ms | 7,522 ms | 33.47 s |
+| **Linux kernel** | 2,082 ms | 59,565 ms | 30,376 ms | 59,267 ms | 171.17 s |
 
-The **pipeline** (ctags parsing + database writes) dominates for all projects. Schema rebuild (B-tree indexes + FTS5 rebuild) accounts for 14-29% of total time.
+The **pipeline** (ctags parsing + database writes) dominates for all projects. Schema rebuild (B-tree indexes + FTS5 rebuild + import resolution + centrality) accounts for 18-35% of total time.
 
 ### Schema Rebuild Breakdown
 
 | Codebase | Symbols | B-tree indexes | FTS5 rebuild | Total |
 |----------|---------|----------------|--------------|-------|
-| **curl** | 33,973 | 37 ms | 67 ms | 109 ms |
-| **Redis** | 45,593 | 49 ms | 102 ms | 154 ms |
-| **Neovim** | 56,663 | 69 ms | 106 ms | 179 ms |
-| **Laravel** | 39,145 | 90 ms | 75 ms | 166 ms |
-| **Django** | 93,035 | 149 ms | 155 ms | 308 ms |
-| **Kubernetes** | 294,753 | 652 ms | 737 ms | 1,393 ms |
-| **dotnet/runtime** | 1,241,380 | 3,323 ms | 3,539 ms | 6,866 ms |
-| **Linux kernel** | 7,433,275 | 13,196 ms | 24,682 ms | 37,881 ms |
+| **curl** | 33,973 | 37 ms | 58 ms | 109 ms |
+| **Redis** | 45,596 | 46 ms | 96 ms | 158 ms |
+| **Neovim** | 56,663 | 68 ms | 100 ms | 201 ms |
+| **Laravel** | 39,188 | 64 ms | 68 ms | 217 ms |
+| **Django** | 93,254 | 150 ms | 143 ms | 362 ms |
+| **Kubernetes** | 294,753 | 545 ms | 743 ms | 2,197 ms |
+| **dotnet/runtime** | 1,241,626 | 2,582 ms | 3,218 ms | 7,522 ms |
+| **Linux kernel** | 7,433,275 | 16,598 ms | 37,979 ms | 59,267 ms |
 
-Schema v3 uses 3 B-tree indexes on `symbols` (file+line, kind+language, parent_id) plus 1 FTS5 index. The v2→v3 migration removed 4 redundant indexes (`idx_symbols_name`, `idx_symbols_kind`, `idx_symbols_language`, `idx_symbols_qualified`), reducing rebuild time by approximately 40% on large codebases compared to schema v2.
+Schema v4 uses 3 B-tree indexes on `symbols` (file+line, kind+language, parent_id), 3 on `imports`, plus 1 FTS5 index. The total includes import resolution and centrality computation.
 
 ### Database Size
 
 | Codebase | Files | Symbols | DB size |
 |----------|-------|---------|---------|
 | **curl** | 1,108 | 33,973 | 20 MB |
-| **Redis** | 727 | 45,593 | 29 MB |
+| **Redis** | 727 | 45,596 | 30 MB |
 | **Neovim** | 3,297 | 56,663 | 31 MB |
-| **Laravel** | 2,783 | 39,145 | 47 MB |
-| **Django** | 2,945 | 93,035 | 72 MB |
-| **Kubernetes** | 12,881 | 294,753 | 329 MB |
-| **dotnet/runtime** | 37,668 | 1,241,380 | 1,298 MB |
-| **Linux kernel** | 65,231 | 7,433,275 | 5,156 MB |
+| **Laravel** | 2,783 | 39,188 | 47 MB |
+| **Django** | 2,945 | 93,254 | 72 MB |
+| **Kubernetes** | 12,881 | 294,753 | 331 MB |
+| **dotnet/runtime** | 37,668 | 1,241,626 | 1,344 MB |
+| **Linux kernel** | 65,231 | 7,433,275 | 5,188 MB |
 
 Storage scales linearly with symbol count. The FTS5 full-text index accounts for roughly 30-40% of total database size. At ~0.7 KB/symbol (Linux kernel), storage cost is predictable.
 
@@ -113,39 +113,50 @@ Peak RSS during indexing:
 
 | Codebase | Files | Symbols | Peak RSS |
 |----------|-------|---------|----------|
-| **curl** | 1,108 | 33,973 | 47 MB |
-| **Redis** | 727 | 45,593 | 70 MB |
-| **Neovim** | 3,297 | 56,663 | 83 MB |
-| **Laravel** | 2,783 | 39,145 | 97 MB |
-| **Django** | 2,945 | 93,035 | 131 MB |
-| **Kubernetes** | 12,881 | 294,753 | 395 MB |
-| **dotnet/runtime** | 37,668 | 1,241,380 | 1,166 MB |
-| **Linux kernel** | 65,231 | 7,433,275 | 4,029 MB |
+| **curl** | 1,108 | 33,973 | 48 MB |
+| **Redis** | 727 | 45,596 | 71 MB |
+| **Neovim** | 3,297 | 56,663 | 84 MB |
+| **Laravel** | 2,783 | 39,188 | 102 MB |
+| **Django** | 2,945 | 93,254 | 122 MB |
+| **Kubernetes** | 12,881 | 294,753 | 410 MB |
+| **dotnet/runtime** | 37,668 | 1,241,626 | 1,303 MB |
+| **Linux kernel** | 65,231 | 7,433,275 | 4,010 MB |
 
-Memory usage is dominated by the parallel worker pipeline (16 ctags processes + in-flight symbol batches). For typical projects (< 10K files), peak RSS stays under 400 MB.
+Memory usage is dominated by the parallel worker pipeline (16 ctags processes + in-flight symbol batches). For typical projects (< 10K files), peak RSS stays under 500 MB.
 
 ---
 
 ## Incremental Update Performance
 
-### No Changes (`index:update`, nothing modified)
-
-Not benchmarked separately in this run. Based on prior measurements (see Methodology), no-change updates complete in 50-150 ms for projects up to 3,300 files.
-
 ### 10 Modified Files
 
-Ten random source files were modified (appended a comment to change content hash), then `index:update` was run.
+Ten indexed source files were modified (appended a comment to change content hash), then `index:update` was run.
 
 | Codebase | Changed | Wall time |
 |----------|---------|-----------|
-| **curl** | 10 | **0.72 s** |
-| **Redis** | 5 | **0.77 s** |
-| **Neovim** | 10 | **0.84 s** |
-| **Laravel** | 3 | **0.77 s** |
-| **Django** | 10 | **1.03 s** |
-| **Kubernetes** | 5 | **2.50 s** |
-| **dotnet/runtime** | 10 | **11.85 s** |
-| **Linux kernel** | 9 | **50.15 s** |
+| **curl** | 10 | **0.60 s** |
+| **Redis** | 10 | **0.66 s** |
+| **Laravel** | 10 | **0.66 s** |
+| **Neovim** | 10 | **0.68 s** |
+| **Django** | 10 | **0.73 s** |
+| **Kubernetes** | 10 | **1.84 s** |
+| **dotnet/runtime** | 10 | **6.84 s** |
+| **Linux kernel** | 10 | **13.76 s** |
+
+### Single File Update
+
+One additional indexed file was modified, then `index:update --file <path>` was run.
+
+| Codebase | Wall time |
+|----------|-----------|
+| **curl** | **0.58 s** |
+| **Redis** | **0.59 s** |
+| **Neovim** | **0.62 s** |
+| **Laravel** | **0.67 s** |
+| **Django** | **0.70 s** |
+| **Kubernetes** | **1.76 s** |
+| **dotnet/runtime** | **6.45 s** |
+| **Linux kernel** | **13.50 s** |
 
 Incremental updates on small projects complete in under 1 second. The high update time for Linux kernel and dotnet/runtime is dominated by the initial file-hash scan across 65K/38K files. The actual re-indexing of changed files is fast; the bottleneck is comparing all stored hashes against current file contents.
 
@@ -153,67 +164,82 @@ Incremental updates on small projects complete in under 1 second. The high updat
 
 ## MCP Server Query Performance
 
-All MCP tools were tested via the JSON-RPC protocol (`toktoken serve`). Times shown are **server-side processing** (excluding process startup and JSON serialization overhead).
+All MCP tools were tested via the JSON-RPC protocol (`toktoken serve`). Times shown are **client-side round-trip** including JSON serialization.
 
 ### Search Tools
 
 | Codebase | search:symbols | search:text | search:cooccurrence | search:similar |
 |----------|---------------|-------------|--------------------:|---------------:|
-| **curl** | 17 ms | 28 ms | 1 ms | 2 ms |
-| **Redis** | 12 ms | 38 ms | 1 ms | 4 ms |
-| **Neovim** | 15 ms | 49 ms | 4 ms | 3 ms |
-| **Django** | 16 ms | 36 ms | 13 ms | 7 ms |
-| **Laravel** | 12 ms | 122 ms | 8 ms | 7 ms |
-| **Kubernetes** | 19 ms | 51 ms | 2 ms | 40 ms |
-| **dotnet/runtime** | 33 ms | 80 ms | 2 ms | 31 ms |
-| **Linux kernel** | 46 ms | 137 ms | 1 ms | 151 ms |
+| **curl** | 17 ms | 25 ms | 14 ms | 7 ms |
+| **Redis** | 15 ms | 25 ms | 24 ms | 8 ms |
+| **Laravel** | 13 ms | 118 ms | 11 ms | 7 ms |
+| **Neovim** | 16 ms | 37 ms | 22 ms | 7 ms |
+| **Django** | 16 ms | 139 ms | 16 ms | 16 ms |
+| **Kubernetes** | 25 ms | 36 ms | 23 ms | 61 ms |
+| **dotnet/runtime** | 51 ms | 70 ms | 26 ms | 53 ms |
+| **Linux kernel** | 418 ms | 103 ms | 261 ms | 400 ms |
 
-Symbol search (`search:symbols`) uses FTS5 and stays under 50 ms even on 7.4M symbols. Text search (`search:text`) scales roughly linearly with file count.
+Symbol search (`search:symbols`) uses FTS5 and stays under 55 ms for projects up to 1.2M symbols. Text search (`search:text`) scales with indexed file count. On the Linux kernel (7.4M symbols), symbol search takes 418 ms.
 
 ### Inspect Tools
 
 | Codebase | inspect:outline | inspect:symbol | inspect:file | inspect:bundle | inspect:tree | inspect:hierarchy | inspect:dependencies |
 |----------|----------------|----------------|-------------|---------------|-------------|------------------|---------------------|
-| **curl** | 17 ms | 17 ms | 16 ms | 16 ms | 12 ms | 1 ms | 1 ms |
-| **Redis** | 14 ms | 12 ms | 12 ms | 12 ms | 13 ms | 0 ms | 1 ms |
-| **Neovim** | 12 ms | 11 ms | 0 ms | 1 ms | 20 ms | 0 ms | 2 ms |
-| **Django** | 1 ms | 12 ms | 12 ms | 1 ms | 16 ms | 1 ms | 2 ms |
-| **Laravel** | 12 ms | 12 ms | 10 ms | 10 ms | 14 ms | 1 ms | 3 ms |
-| **Kubernetes** | 21 ms | 11 ms | 11 ms | 12 ms | 40 ms | 1 ms | 21 ms |
-| **dotnet/runtime** | 12 ms | 12 ms | 12 ms | 19 ms | 105 ms | 1 ms | 3 ms |
-| **Linux kernel** | 11 ms | 11 ms | 11 ms | 10 ms | 189 ms | 1 ms | 275 ms |
+| **curl** | 15 ms | 14 ms | 14 ms | 17 ms | 22 ms | 16 ms | 29 ms |
+| **Redis** | 29 ms | 19 ms | 11 ms | 32 ms | 16 ms | 23 ms | 4 ms |
+| **Laravel** | 37 ms | 12 ms | 13 ms | 32 ms | 15 ms | 3 ms | 101 ms |
+| **Neovim** | 25 ms | 14 ms | 16 ms | 23 ms | 24 ms | 34 ms | 3 ms |
+| **Django** | 49 ms | 14 ms | 13 ms | 49 ms | 21 ms | 14 ms | 47 ms |
+| **Kubernetes** | 24 ms | 14 ms | 14 ms | 12 ms | 33 ms | 3 ms | 2 ms |
+| **dotnet/runtime** | 7 ms | 13 ms | 13 ms | 8 ms | 56 ms | 6 ms | 3 ms |
+| **Linux kernel** | 12 ms | 14 ms | 12 ms | 14 ms | 144 ms | 3 ms | 2 ms |
 
-Most inspect operations complete in under 20 ms regardless of codebase size. The `inspect:tree` operation scales with file count (189 ms for 65K files). The `inspect:dependencies` outlier on Linux (275 ms) reflects the recursive import graph traversal.
+Most inspect operations complete in under 50 ms regardless of codebase size. The `inspect:tree` operation scales with file count (144 ms for 65K files).
 
 ### Find Tools
 
-| Codebase | find:importers | find:references | find:callers |
-|----------|---------------|----------------|-------------|
-| **curl** | 2 ms | 1 ms | 1 ms |
-| **Redis** | 1 ms | 1 ms | 1 ms |
-| **Neovim** | 2 ms | 1 ms | 2 ms |
-| **Django** | 2 ms | 2 ms | 1 ms |
-| **Laravel** | 2 ms | 3 ms | 2 ms |
-| **Kubernetes** | 16 ms | 13 ms | 16 ms |
-| **dotnet/runtime** | 2 ms | 2 ms | 2 ms |
-| **Linux kernel** | 43 ms | 38 ms | 53 ms |
+| Codebase | find:importers | find:references | find:callers | find:dead |
+|----------|---------------|----------------|-------------|-----------|
+| **curl** | 7 ms | 2 ms | 12 ms | 4 ms |
+| **Redis** | 3 ms | 2 ms | 11 ms | 3 ms |
+| **Laravel** | 42 ms | 4 ms | 6 ms | 5 ms |
+| **Neovim** | 4 ms | 2 ms | 3 ms | 3 ms |
+| **Django** | 7 ms | 4 ms | 2 ms | 3 ms |
+| **Kubernetes** | 2 ms | 139 ms | 2 ms | 6 ms |
+| **dotnet/runtime** | 3 ms | 85 ms | 10 ms | 8 ms |
+| **Linux kernel** | 2 ms | 1,217 ms | 2 ms | 21 ms |
 
-Find operations leverage B-tree indexes on the imports table. Even on the Linux kernel with its dense import graph, all find operations complete in under 60 ms.
+Find operations leverage B-tree indexes on the imports table. `find:references` performs full-text search and scales with symbol count -- 1.2 seconds on the Linux kernel's 7.4M symbols.
+
+### Analysis Tools
+
+| Codebase | inspect:blast | inspect:cycles |
+|----------|--------------|----------------|
+| **curl** | 5 ms | 3 ms |
+| **Redis** | 5 ms | 3 ms |
+| **Laravel** | 40 ms | 9 ms |
+| **Neovim** | 4 ms | 5 ms |
+| **Django** | 53 ms | 14 ms |
+| **Kubernetes** | 3 ms | 24 ms |
+| **dotnet/runtime** | 3 ms | 131 ms |
+| **Linux kernel** | 2 ms | 653 ms |
+
+Cycle detection scales with import graph complexity. The Linux kernel's dense C include graph takes 653 ms to analyze.
 
 ### Stats
 
 | Codebase | Latency |
 |----------|---------|
-| **curl** | 11 ms |
-| **Redis** | 7 ms |
-| **Neovim** | 13 ms |
-| **Django** | 18 ms |
-| **Laravel** | 8 ms |
-| **Kubernetes** | 66 ms |
-| **dotnet/runtime** | 274 ms |
-| **Linux kernel** | 1,836 ms |
+| **curl** | 8 ms |
+| **Redis** | 11 ms |
+| **Laravel** | 9 ms |
+| **Neovim** | 16 ms |
+| **Django** | 20 ms |
+| **Kubernetes** | 59 ms |
+| **dotnet/runtime** | 292 ms |
+| **Linux kernel** | 1,661 ms |
 
-The `stats` command aggregates counts across all tables. On extremely large databases (5+ GB, 7.4M symbols), the aggregation takes 1.8 seconds. For typical projects (< 100K symbols), stats returns in under 70 ms.
+The `stats` command aggregates counts across all tables. On extremely large databases (5+ GB, 7.4M symbols), the aggregation takes 1.7 seconds. For typical projects (< 100K symbols), stats returns in under 60 ms.
 
 ---
 
@@ -221,16 +247,16 @@ The `stats` command aggregates counts across all tables. On extremely large data
 
 The smart filter excludes non-code files and vendored subdirectories. Its effectiveness varies by project structure:
 
-| Codebase | Total files | Indexed files | Filter ratio | Rejected by ext | Notes |
-|----------|-------------|---------------|-------------|-----------------|-------|
-| **curl** | 4,216 | 1,108 | 26.3% | 3,108 | Heavy .md, .txt, .cmake |
-| **Redis** | 1,746 | 727 | 41.6% | 1,019 | Moderate docs/config |
-| **Neovim** | 3,777 | 3,297 | 87.3% | 457 | Mostly code (.vim, .lua, .c) |
-| **Django** | 7,024 | 2,945 | 41.9% | 4,011 | .html, .txt, .po templates |
-| **Laravel** | 3,090 | 2,783 | 90.1% | 293 | Mostly PHP code |
-| **Kubernetes** | 28,482 | 12,881 | 45.2% | 10,217 | .yaml, .json, vendor |
-| **dotnet/runtime** | 57,006 | 37,668 | 66.1% | 18,502 | .xml, .props, resources |
-| **Linux kernel** | 92,931 | 65,231 | 70.2% | 34,573 | Headers + docs excluded |
+| Codebase | Total files | Indexed files | Filter ratio | Rejected by ext | Rejected by gitignore | Notes |
+|----------|-------------|---------------|-------------|-----------------|----------------------|-------|
+| **curl** | 4,216 | 1,108 | 26.3% | 3,108 | 0 | Heavy .md, .txt, .cmake |
+| **Redis** | 1,746 | 727 | 41.6% | 849 | 163 | Moderate docs/config |
+| **Django** | 7,024 | 2,945 | 41.9% | 4,011 | 0 | .html, .txt, .po templates |
+| **Kubernetes** | 28,482 | 12,881 | 45.2% | 10,213 | 0 | .yaml, .json, vendor |
+| **dotnet/runtime** | 57,006 | 37,668 | 66.1% | 18,502 | 0 | .xml, .props, resources |
+| **Linux kernel** | 92,931 | 65,231 | 70.2% | 33,078 | 1,494 | Headers + docs excluded |
+| **Neovim** | 3,777 | 3,297 | 87.3% | 457 | 0 | Mostly code (.vim, .lua, .c) |
+| **Laravel** | 3,090 | 2,783 | 90.1% | 293 | 0 | Mostly PHP code |
 
 The smart filter is most effective on projects with heavy documentation (curl: 74% filtered out) and least effective on pure-code projects (Laravel: 10% filtered out, Neovim: 13% filtered out).
 
@@ -267,45 +293,50 @@ Over a typical coding session with 20-30 symbol lookups, TokToken saves **hundre
 
 | Operation | Small (< 3K files) | Medium (3K-13K files) | Large (38K-65K files) |
 |-----------|--------------------|-----------------------|----------------------|
-| Full index | **0.8-1.7 s** | **1.4-6.1 s** | **28-130 s** |
-| Incremental update (10 files) | **0.7-1.0 s** | **0.8-2.5 s** | **12-50 s** |
-| Symbol search | **12-17 ms** | **15-19 ms** | **33-46 ms** |
-| Text search | **28-122 ms** | **36-51 ms** | **80-137 ms** |
-| Symbol retrieval | **11-17 ms** | **11 ms** | **11-12 ms** |
-| File outline | **1-17 ms** | **12-21 ms** | **11-12 ms** |
-| Context bundle | **1-16 ms** | **10-12 ms** | **10-19 ms** |
-| Directory tree | **12-16 ms** | **14-20 ms** | **105-189 ms** |
-| Stats | **7-18 ms** | **8-66 ms** | **274-1,836 ms** |
+| Full index | **0.8-2.2 s** | **1.0-10.1 s** | **33-171 s** |
+| Incremental update (10 files) | **0.6-0.7 s** | **0.7-1.8 s** | **6.8-13.8 s** |
+| Single-file update | **0.6-0.7 s** | **0.6-1.8 s** | **6.5-13.5 s** |
+| Symbol search | **13-17 ms** | **16-25 ms** | **51-418 ms** |
+| Text search | **25-139 ms** | **36-37 ms** | **70-103 ms** |
+| Symbol retrieval | **12-19 ms** | **14 ms** | **13-14 ms** |
+| File outline | **15-49 ms** | **24-25 ms** | **7-12 ms** |
+| Context bundle | **17-49 ms** | **12-23 ms** | **8-14 ms** |
+| Directory tree | **15-22 ms** | **24-33 ms** | **56-144 ms** |
+| Stats | **8-20 ms** | **16-59 ms** | **292-1,661 ms** |
 
 ### Key Observations
 
-1. **All query operations on typical projects (< 13K files) complete in under 70 ms.** The slowest observed query (text search on Laravel, 122 ms) remains well under the threshold of perceptibility for an AI agent.
+1. **All query operations on typical projects (< 13K files) complete in under 140 ms.** The slowest observed query (text search on Django, 139 ms) remains well under the threshold of perceptibility for an AI agent.
 
-2. **Symbol search is effectively constant-time.** Django's 93K symbols and Linux's 7.4M symbols return results in 16 ms vs 46 ms. FTS5 indexing keeps search complexity logarithmic.
+2. **Symbol search is effectively constant-time.** Django's 93K symbols and Kubernetes's 295K symbols return results in 16 ms vs 25 ms. FTS5 indexing keeps search complexity logarithmic.
 
-3. **Symbol retrieval is truly constant-time.** Retrieving a function's source code takes 11-17 ms regardless of codebase size. It is a database lookup + file seek, not a scan.
+3. **Symbol retrieval is truly constant-time.** Retrieving a function's source code takes 12-19 ms regardless of codebase size. It is a database lookup + file seek, not a scan.
 
-4. **Schema v3 indexes are optimized.** The 3 B-tree indexes on `symbols` (file+line, kind+language, parent_id) plus FTS5 cover all query patterns. The v2→v3 migration removed 4 redundant indexes, reducing rebuild time on large codebases.
+4. **Schema v4 indexes are optimized.** The 3 B-tree indexes on `symbols` (file+line, kind+language, parent_id), 3 on `imports`, plus FTS5 cover all query patterns. Import resolution and centrality computation are included in schema rebuild.
 
 5. **Indexing parallelizes across 16 workers.** All 16 cores are utilized for ctags parsing. The pipeline uses an MPSC queue to funnel results to a single SQLite writer thread.
 
-6. **Memory scales linearly.** Peak RSS ranges from 47 MB (curl, 34K symbols) to 4 GB (Linux, 7.4M symbols). For typical projects (< 100K symbols), peak RSS stays well under 500 MB.
+6. **Memory scales linearly.** Peak RSS ranges from 48 MB (curl, 34K symbols) to 4 GB (Linux, 7.4M symbols). For typical projects (< 100K symbols), peak RSS stays well under 500 MB.
 
 7. **Native C binary, zero startup cost.** No interpreter, no JVM, no runtime. The binary starts in under 1 ms and has no warm-up period.
+
+8. **Incremental update correctly detects all changes.** All 8 projects correctly detected exactly 10 modified files and 1 single-file update with zero false positives.
+
+9. **160 MCP tool calls across 8 projects: zero failures.** Every tool returned successfully on every project from 727 files (Redis) to 65,231 files (Linux kernel).
 
 ---
 
 ## Methodology
 
-- All timings are wall-clock measurements from a Python benchmark harness using `time.monotonic()`.
-- MCP server-side timings are extracted from the `_ttk.duration_ms` field in JSON responses.
-- Modified-file benchmarks appended a C comment to change content hash, then reverted via `git checkout .` after measurement.
+- All timings are wall-clock measurements from a bash benchmark harness using `date +%s%3N`.
+- MCP timings are measured from the client side (write request to read response) via named pipes.
+- Modified-file benchmarks appended a comment to change content hash, then reverted via `git checkout .` after measurement.
 - Diagnostic output (`--diagnostic`) was captured to JSONL files for timing breakdown analysis.
 - "Total files" counts include all files on disk (excluding `.git/`). "Indexed files" reflects smart-filter output.
 - Token estimates use the standard approximation: 1 token per 4 characters of source code.
 - Database sizes are measured immediately after `index:create` (SQLite WAL mode, not checkpointed).
-- File visit counts may differ slightly from `find` counts due to `.gitignore` filtering.
+- Peak RSS is measured via `/proc/self/statm` snapshots during indexing.
 
 ---
 
-*TokToken v1.0.0 -- Benchmarked 2026-03-17*
+*TokToken v0.2.0 -- Benchmarked 2026-03-20*

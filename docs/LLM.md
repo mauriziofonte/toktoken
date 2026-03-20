@@ -228,6 +228,10 @@ toktoken index:update
 | `search_similar` | Find symbols similar to a given one by name/summary keywords |
 | `inspect_dependencies` | Trace transitive import graph recursively |
 | `inspect_hierarchy` | Show class/function hierarchy with parent-child relationships |
+| `inspect_blast` | Symbol blast radius analysis (BFS on reverse import graph) |
+| `inspect_cycles` | Detect circular import cycles (Tarjan's SCC) |
+| `find_dead` | Find unreferenced symbols (dead/unreferenced classification, confidence levels) |
+| `index_file` | Reindex a single file without rebuilding the full index |
 
 ### CLI command reference
 
@@ -243,6 +247,10 @@ toktoken search:symbols "ldap" --count
 toktoken search:symbols "route" --sort name --kind function --unique
 toktoken search:symbols "auth" --no-sig --no-summary
 toktoken search:symbols "handler" --language go
+toktoken search:symbols "cache" --detail compact
+toktoken search:symbols "auth" --token-budget 2000
+toktoken search:symbols "validator" --scope-imports-of src/Auth.php
+toktoken search:symbols "handler" --scope-importers-of src/Events/Dispatcher.php
 ```
 
 | Flag | Description |
@@ -261,6 +269,10 @@ toktoken search:symbols "handler" --language go
 | `--debug` | Show per-field score breakdown (name, signature, summary, keyword, docstring) |
 | `--file <glob>` | Filter by file glob |
 | `--compact` | Compact JSON output |
+| `--detail <level>` | Output verbosity: `compact` (name+file+kind only), `standard` (default), `full` (all fields) |
+| `--token-budget <n>` | Stop returning results once cumulative token estimate exceeds N |
+| `--scope-imports-of <file>` | Restrict results to symbols imported by the given file |
+| `--scope-importers-of <file>` | Restrict results to symbols found in files that import the given file |
 
 #### search:text
 
@@ -305,9 +317,12 @@ toktoken inspect:symbol "src/Auth.php::Auth.login#method" --context 5
 toktoken inspect:bundle "src/Auth.php::Auth.login#method"
 toktoken inspect:bundle "src/Auth.php::Auth.login#method" --full
 toktoken inspect:bundle "src/Auth.php::Auth.login#method" --compact
+toktoken inspect:bundle "src/Auth.php::Auth.login#method,src/Auth.php::Auth.logout#method"
+toktoken inspect:bundle "src/Auth.php::Auth.login#method" --include-callers
+toktoken inspect:bundle "src/Auth.php::Auth.login#method" --format markdown
 ```
 
-Returns a self-contained context bundle: symbol definition with source code, import lines from the same file, sibling symbols (file outline). Use `--full` to also include importers (files that import this symbol's file).
+Returns a self-contained context bundle: symbol definition with source code, import lines from the same file, sibling symbols (file outline). Use `--full` to also include importers (files that import this symbol's file). Pass comma-separated IDs to bundle multiple symbols in a single call. Use `--include-callers` to append caller symbols to the bundle. Use `--format markdown` to get the bundle as a Markdown document instead of JSON.
 
 #### inspect:file
 
@@ -327,12 +342,16 @@ toktoken inspect:tree --depth 2
 
 | Command | Description |
 | ------- | ----------- |
-| `stats` | Index statistics + token savings report |
+| `stats` | Index statistics + token savings report (includes per-tool savings breakdown) |
 | `index:create [path]` | Full index from scratch. Use `--full` to include all file types and vendors |
 | `index:update [path]` | Incremental re-index. Use `--full` to include all file types and vendors |
+| `index:file <file>` | Reindex a single file without rebuilding the full index |
 | `index:github <owner/repo>` | Clone and index a GitHub repository |
-| `inspect:bundle <id>` | Symbol context bundle (definition + imports + outline). Use `--full` for importers |
-| `find:importers <file>` | Find files that import a given file |
+| `inspect:bundle <id>` | Symbol context bundle (definition + imports + outline). Use `--full` for importers. Supports comma-separated IDs, `--include-callers`, `--format markdown` |
+| `inspect:blast <id>` | Symbol blast radius analysis via BFS on the reverse import graph |
+| `inspect:cycles` | Detect circular import cycles using Tarjan's SCC algorithm |
+| `find:importers <file>` | Find files that import a given file. Use `--has-importers` to filter to only files that have at least one importer |
+| `find:dead` | Find unreferenced symbols with dead/unreferenced classification and confidence levels |
 | `find:references <id>` | Find import statements referencing an identifier |
 | `find:callers <id>` | Find symbols that likely call a given function/method |
 | `search:cooccurrence "<a>,<b>"` | Find symbols that co-occur in the same file |
@@ -533,9 +552,59 @@ When you need file content but not the whole file.
 
 **Key principle:** `inspect:outline` first gives you line numbers, then `inspect:file --lines` or `inspect:symbol` retrieves only what you need. Never read a whole file when you know which section you want.
 
+### "I want to find and remove dead code"
+
+Identify unreferenced symbols and verify they are safe to delete.
+
+```text
+1. toktoken find:dead
+   --> List all symbols classified as unreferenced, with confidence levels.
+   --> High-confidence = no callers, no importers, not exported. Low-confidence = heuristic only.
+
+2. toktoken inspect:blast "src/Utils/LegacyFormatter.php::LegacyFormatter#class"
+   --> Even if find:dead flagged it, confirm the blast radius is truly zero
+   --> before deleting. BFS on the reverse import graph shows every file
+   --> that would be affected by its removal.
+
+3. toktoken find:importers "src/Utils/LegacyFormatter.php" --has-importers
+   --> Double-check: are there any importers? --has-importers returns only
+   --> files that actually have at least one importer, making the negative
+   --> signal easy to confirm.
+
+4. toktoken inspect:symbol "src/Utils/LegacyFormatter.php::LegacyFormatter#class"
+   --> Read the symbol source to confirm it is safe to remove (no side effects
+   --> in constructors, no global state, no auto-registration hooks).
+```
+
+**Key principle:** Never delete based on `find:dead` alone. Always confirm with `inspect:blast` and `find:importers --has-importers`. Confidence levels are heuristic -- low-confidence results require manual review.
+
+### "I want to detect and break circular dependencies"
+
+Find import cycles before they cause runtime issues or make refactoring impossible.
+
+```text
+1. toktoken inspect:cycles
+   --> Run Tarjan's SCC algorithm across the full import graph.
+   --> Each reported cycle is a strongly connected component with 2+ files.
+
+2. toktoken inspect:dependencies src/ServiceA.php --depth 3
+   --> For each file in the cycle, trace its import graph to understand
+   --> which dependency introduced the loop.
+
+3. toktoken inspect:bundle "src/ServiceA.php::ServiceA#class" --include-callers
+   --> Get the full context of the class at the root of the cycle,
+   --> including its callers, to decide which dependency to invert or extract.
+
+4. toktoken find:importers "src/ServiceA.php"
+   --> Who imports ServiceA? If you extract an interface to break the cycle,
+   --> these are the files that will need to be updated.
+```
+
 ---
 
 ## Configuration
+
+> **Schema version:** The index database is schema v4. v4 adds a `file_centrality` table that boosts search ranking for high-import files. Indexes created with older versions are automatically migrated on the first `index:update`.
 
 ### Project config: `.toktoken.json`
 

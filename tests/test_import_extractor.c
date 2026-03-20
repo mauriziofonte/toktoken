@@ -31,7 +31,7 @@ TT_TEST(test_extract_js_imports)
     int count = 0;
     int rc = tt_extract_imports(root, "app.js", "javascript", &imps, &count);
     TT_ASSERT_EQ_INT(rc, 0);
-    TT_ASSERT(count >= 4, "JS has at least 4 imports");
+    TT_ASSERT(count >= 6, "JS has at least 6 imports (static + dynamic)");
 
     const tt_import_t *imp = find_import(imps, count, "react");
     TT_ASSERT(imp != NULL, "found react import");
@@ -46,6 +46,43 @@ TT_TEST(test_extract_js_imports)
 
     imp = find_import(imps, count, "path");
     TT_ASSERT(imp != NULL, "found path require");
+
+    /* Dynamic imports */
+    imp = find_import(imps, count, "./lazy-module");
+    TT_ASSERT(imp != NULL, "found dynamic import('./lazy-module')");
+    if (imp) TT_ASSERT_EQ_STR(imp->import_type, "dynamic_import");
+
+    imp = find_import(imps, count, "./dynamic-page");
+    TT_ASSERT(imp != NULL, "found dynamic import(\"./dynamic-page\")");
+    if (imp) TT_ASSERT_EQ_STR(imp->import_type, "dynamic_import");
+
+    /* reimport() should NOT be matched */
+    imp = find_import(imps, count, "should-not-match");
+    TT_ASSERT(imp == NULL, "reimport('...') not matched");
+
+    tt_import_array_free(imps, count);
+}
+
+TT_TEST(test_extract_vue_imports)
+{
+    /* Vue files should use the JS extractor */
+    const char *lines[] = {
+        "import axios from 'axios';",
+        "const mod = await import('./lazy');",
+    };
+    tt_import_t *imps = NULL;
+    int count = 0, cap = 0;
+    int rc = tt_extract_imports_from_lines("App.vue", "vue", lines, 2,
+                                           &imps, &count, &cap);
+    TT_ASSERT_EQ_INT(rc, 0);
+    TT_ASSERT_EQ_INT(count, 2);
+
+    const tt_import_t *imp = find_import(imps, count, "axios");
+    TT_ASSERT(imp != NULL, "vue: found axios import");
+
+    imp = find_import(imps, count, "./lazy");
+    TT_ASSERT(imp != NULL, "vue: found dynamic import");
+    if (imp) TT_ASSERT_EQ_STR(imp->import_type, "dynamic_import");
 
     tt_import_array_free(imps, count);
 }
@@ -183,6 +220,7 @@ void run_import_extractor_tests(void)
 {
     TT_SUITE("Import Extractor: JavaScript");
     TT_RUN(test_extract_js_imports);
+    TT_RUN(test_extract_vue_imports);
 
     TT_SUITE("Import Extractor: Python");
     TT_RUN(test_extract_python_imports);

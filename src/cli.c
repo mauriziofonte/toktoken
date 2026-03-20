@@ -59,6 +59,13 @@ static const flag_def_t flag_table[] = {
     BOOL_FLAG('r', "regex",          regex),
     BOOL_FLAG('s', "case-sensitive", case_sensitive),
     BOOL_FLAG( 0,  "verify",         verify),
+    BOOL_FLAG( 0,  "has-importers",  has_importers),
+    BOOL_FLAG( 0,  "include-callers", include_callers),
+    STR_FLAG ( 0,  "detail",          detail),
+    INT_FLAG ( 0,  "token-budget",    token_budget),
+    BOOL_FLAG( 0,  "exclude-tests",  exclude_tests),
+    BOOL_FLAG( 0,  "cross-dir",      cross_dir),
+    INT_FLAG ( 0,  "min-length",     min_length),
     BOOL_FLAG('D', "debug",          debug),
     BOOL_FLAG('X', "diagnostic",     diagnostic),
     BOOL_FLAG('a', "all",            all),
@@ -81,6 +88,8 @@ static const flag_def_t flag_table[] = {
     STR_FLAG('g', "group-by",   group_by),
     STR_FLAG( 0,  "lines",      lines),
     STR_FLAG( 0,  "languages",  languages),
+    STR_FLAG( 0,  "scope-imports-of",   scope_imports_of),
+    STR_FLAG( 0,  "scope-importers-of", scope_importers_of),
     STR_FLAG('b', "branch",     branch),
 
     /* Value flags (int) */

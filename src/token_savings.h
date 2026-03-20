@@ -38,6 +38,16 @@ typedef struct {
     int64_t total_tokens_saved;
 } tt_savings_totals_t;
 
+/* ---- Per-tool breakdown entry ---- */
+
+typedef struct {
+    char *tool_name;            /* [owns] tool name */
+    int64_t call_count;
+    int64_t raw_bytes;
+    int64_t response_bytes;
+    int64_t tokens_saved;
+} tt_savings_per_tool_t;
+
 /* ---- Core functions ---- */
 
 /*
@@ -74,9 +84,25 @@ int tt_savings_get_totals(tt_database_t *db, tt_savings_totals_t *out);
 /*
  * tt_savings_reset -- Clear all savings data for the current project.
  *
+ * Clears both savings_totals and savings_per_tool.
  * Returns 0 on success, -1 on error.
  */
 int tt_savings_reset(tt_database_t *db);
+
+/*
+ * tt_savings_get_per_tool -- Load per-tool breakdown from the database.
+ *
+ * Returns an array of per-tool entries sorted by tokens_saved DESC.
+ * Caller must free via tt_savings_free_per_tool().
+ * Returns 0 on success, -1 on error.
+ */
+int tt_savings_get_per_tool(tt_database_t *db, tt_savings_per_tool_t **out,
+                            int *out_count);
+
+/*
+ * tt_savings_free_per_tool -- Free array returned by tt_savings_get_per_tool.
+ */
+void tt_savings_free_per_tool(tt_savings_per_tool_t *items, int count);
 
 /* ---- raw_bytes helpers ---- */
 

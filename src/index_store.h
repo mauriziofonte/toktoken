@@ -217,10 +217,34 @@ int tt_store_update_file_metadata(tt_index_store_t *store,
 
 int tt_store_insert_imports(tt_index_store_t *store, const tt_import_t *imps, int count);
 int tt_store_delete_imports_for_file(tt_index_store_t *store, const char *file_path);
+
+/*
+ * tt_store_resolve_imports -- Resolve import specifiers to file paths.
+ *
+ * For each import record with resolved_file = '', attempts to match the
+ * target_name (language-specific specifier) to a file path in the files table.
+ * Uses separator normalization, extension probing, relative path resolution,
+ * and case-insensitive suffix matching. Works across all languages.
+ *
+ * Call after all files and imports have been inserted (post-pipeline).
+ * Returns 0 on success, -1 on error.
+ */
+int tt_store_resolve_imports(tt_index_store_t *store);
+
 int tt_store_get_importers(tt_index_store_t *store, const char *file_path,
                            tt_import_t **out, int *out_count);
+int tt_store_count_importers(tt_index_store_t *store, const char *file_path);
 int tt_store_find_references(tt_index_store_t *store, const char *identifier,
                              tt_import_t **out, int *out_count);
+
+/*
+ * tt_store_get_imports_of -- Get files imported by a given file (forward direction).
+ *
+ * Returns target_name values from imports where source_file matches.
+ * out_files: [caller-frees] array of strings.
+ */
+int tt_store_get_imports_of(tt_index_store_t *store, const char *file_path,
+                             char ***out_files, int *out_count);
 
 /* ---- Hierarchy nodes (inspect:hierarchy) ---- */
 
@@ -304,5 +328,21 @@ int tt_store_search_similar(tt_index_store_t *store,
 /* ---- File summary generation ---- */
 
 int tt_store_generate_file_summaries(tt_index_store_t *store);
+
+/* ---- Centrality ---- */
+
+/*
+ * Compute file centrality scores from the import graph.
+ * Stores log(1 + importer_count) into file_centrality table.
+ * Call after indexing completes.
+ */
+int tt_store_compute_centrality(tt_index_store_t *store);
+
+/*
+ * Load file centrality scores into a hashmap.
+ * Keys are file paths, values are (void *)(intptr_t)(score * 1000).
+ * [caller-frees hashmap with tt_hashmap_free]
+ */
+tt_hashmap_t *tt_store_load_centrality(tt_index_store_t *store);
 
 #endif /* TT_INDEX_STORE_H */

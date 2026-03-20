@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(toktoken VERSION 0.1.0 LANGUAGES C)
+project(toktoken VERSION 0.2.0 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -106,7 +106,7 @@ target_include_directories(toktoken_core PUBLIC src vendor/sqlite3 vendor/cjson 
 target_compile_definitions(toktoken_core PUBLIC TT_VERSION="${PROJECT_VERSION}")
 target_link_libraries(toktoken_core PUBLIC sqlite3 cjson sha256 yyjson wildmatch)
 if(NOT WIN32)
-    target_link_libraries(toktoken_core PUBLIC pthread)
+    target_link_libraries(toktoken_core PUBLIC pthread m)
 endif()
 
 # PCRE2 (system, optional -- skip for static builds to avoid dynamic .so conflict)
@@ -186,6 +186,9 @@ if(BUILD_TESTS)
         tests/test_int_mtime.c
         tests/test_int_ctags_stream.c
         tests/test_int_pipeline.c
+        tests/test_int_v020.c
+        tests/test_int_resolve.c
+        tests/test_int_multilang.c
         tests/test_helpers.c
         tests/test_integration_main.c
     )
@@ -200,6 +203,13 @@ if(BUILD_TESTS)
         tests/test_e2e_inspect.c
         tests/test_e2e_manage.c
         tests/test_e2e_errors.c
+        tests/test_e2e_full_index.c
+        tests/test_e2e_full_search.c
+        tests/test_e2e_full_inspect.c
+        tests/test_e2e_full_find.c
+        tests/test_e2e_full_manage.c
+        tests/test_e2e_full_langs.c
+        tests/test_e2e_full_imports.c
         tests/test_helpers.c
         tests/test_e2e_main.c
     )

@@ -62,6 +62,31 @@ typedef struct
     /* --languages (comma-separated, index:create only) */
     const char *languages;
 
+    /* --has-importers (find:importers enrichment) */
+    bool has_importers;
+
+    /* --include-callers (inspect:bundle enrichment) */
+    bool include_callers;
+
+    /* --detail compact|standard|full (search:symbols) */
+    const char *detail;
+
+    /* --token-budget N (search:symbols) */
+    int token_budget;
+
+    /* --exclude-tests (find:dead) */
+    bool exclude_tests;
+
+    /* --cross-dir (inspect:cycles — show only cross-directory cycles) */
+    bool cross_dir;
+
+    /* --min-length N (inspect:cycles — minimum cycle length) */
+    int min_length;
+
+    /* --scope-imports-of / --scope-importers-of (search:symbols) */
+    const char *scope_imports_of;
+    const char *scope_importers_of;
+
     /* --debug (search:symbols score breakdown) */
     bool debug;
 

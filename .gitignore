@@ -39,3 +39,6 @@ Testing/
 *~
 .cache/
 compile_commands.json
+
+# Diagnostic
+diagnostic/

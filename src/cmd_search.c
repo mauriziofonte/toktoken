@@ -3,6 +3,7 @@
  */
 
 #include "cmd_search.h"
+#include "arena.h"
 #include "json_output.h"
 #include "output_fmt.h"
 #include "error.h"
@@ -101,8 +102,27 @@ static const char *resolve_query(tt_cli_opts_t *opts)
 /* Format a single symbol result as cJSON for search:symbols output.
  * normal mode: id, name, kind, file, line, [qname], [sig], [summary]
  * compact mode: id, l, [s], [d]  */
+/* Detail level: compact < standard (default) < full */
+typedef enum {
+    DETAIL_COMPACT,
+    DETAIL_STANDARD,
+    DETAIL_FULL,
+} detail_level_e;
+
+static detail_level_e parse_detail(const char *detail, bool compact)
+{
+    if (detail && detail[0]) {
+        if (strcmp(detail, "compact") == 0) return DETAIL_COMPACT;
+        if (strcmp(detail, "full") == 0) return DETAIL_FULL;
+    }
+    if (compact) return DETAIL_COMPACT;
+    return DETAIL_STANDARD;
+}
+
 static cJSON *format_symbol_result(const tt_symbol_result_t *r,
-                                   bool compact, bool no_sig, bool no_summary)
+                                   detail_level_e level,
+                                   bool no_sig, bool no_summary,
+                                   const char *source)
 {
     cJSON *obj = cJSON_CreateObject();
     if (!obj)
@@ -112,12 +132,25 @@ static cJSON *format_symbol_result(const tt_symbol_result_t *r,
 
     cJSON_AddStringToObject(obj, "id", sym->id ? sym->id : "");
 
-    if (!compact)
+    if (level == DETAIL_COMPACT)
     {
+        /* Compact: id, name, kind, file, line, byte_length */
         cJSON_AddStringToObject(obj, "name", sym->name ? sym->name : "");
         cJSON_AddStringToObject(obj, "kind", tt_kind_to_str(sym->kind));
         cJSON_AddStringToObject(obj, "file", sym->file ? sym->file : "");
         cJSON_AddNumberToObject(obj, "line", sym->line);
+        if (sym->byte_length > 0)
+            cJSON_AddNumberToObject(obj, "byte_length", sym->byte_length);
+    }
+    else
+    {
+        /* Standard and Full */
+        cJSON_AddStringToObject(obj, "name", sym->name ? sym->name : "");
+        cJSON_AddStringToObject(obj, "kind", tt_kind_to_str(sym->kind));
+        cJSON_AddStringToObject(obj, "file", sym->file ? sym->file : "");
+        cJSON_AddNumberToObject(obj, "line", sym->line);
+        if (sym->byte_length > 0)
+            cJSON_AddNumberToObject(obj, "byte_length", sym->byte_length);
 
         /* qname: only if != "" and != name */
         if (sym->qualified_name && sym->qualified_name[0] &&
@@ -138,21 +171,16 @@ static cJSON *format_symbol_result(const tt_symbol_result_t *r,
         {
             cJSON_AddStringToObject(obj, "summary", sym->summary);
         }
-    }
-    else
-    {
-        /* Compact */
-        cJSON_AddNumberToObject(obj, "l", sym->line);
 
-        if (!no_sig && sym->signature && sym->signature[0])
+        /* Full: add end_line, docstring, source code */
+        if (level == DETAIL_FULL)
         {
-            cJSON_AddStringToObject(obj, "s", sym->signature);
-        }
-
-        if (!no_summary && sym->summary && sym->summary[0] &&
-            !tt_is_tier3_fallback(sym->summary, sym->kind, sym->name))
-        {
-            cJSON_AddStringToObject(obj, "d", sym->summary);
+            if (sym->end_line > 0)
+                cJSON_AddNumberToObject(obj, "end_line", sym->end_line);
+            if (sym->docstring && sym->docstring[0])
+                cJSON_AddStringToObject(obj, "docstring", sym->docstring);
+            if (source)
+                cJSON_AddStringToObject(obj, "source", source);
         }
     }
 
@@ -198,6 +226,15 @@ static int cmp_by_score_desc(const void *a, const void *b)
         return 1;
     if (rb->score < ra->score)
         return -1;
+    return 0;
+}
+
+/* Callback to free file cache entries (file content strings) */
+static int free_cache_entry(const char *key, void *value, void *userdata)
+{
+    (void)key;
+    (void)userdata;
+    free(value);
     return 0;
 }
 
@@ -288,6 +325,51 @@ cJSON *tt_cmd_search_symbols_exec(tt_cli_opts_t *opts)
     }
     free((void *)kinds);
 
+    /* Build scope map if --scope-imports-of or --scope-importers-of */
+    tt_hashmap_t *scope_map = NULL;
+    if (opts->scope_imports_of && opts->scope_imports_of[0])
+    {
+        if (opts->scope_importers_of && opts->scope_importers_of[0])
+        {
+            tt_search_results_free(&sr);
+            tt_store_close(&store);
+            tt_database_close(&db);
+            free(project_path);
+            return make_error("invalid_scope",
+                              "Cannot use both --scope-imports-of and --scope-importers-of",
+                              "Specify only one scope filter");
+        }
+        char **scope_files = NULL;
+        int scope_count = 0;
+        tt_store_get_imports_of(&store, opts->scope_imports_of,
+                                &scope_files, &scope_count);
+        scope_map = tt_hashmap_new(scope_count > 4 ? (size_t)scope_count * 2 : 8);
+        /* Include the source file itself */
+        tt_hashmap_set(scope_map, opts->scope_imports_of, (void *)1);
+        for (int i = 0; i < scope_count; i++)
+        {
+            tt_hashmap_set(scope_map, scope_files[i], (void *)1);
+            free(scope_files[i]);
+        }
+        free(scope_files);
+    }
+    else if (opts->scope_importers_of && opts->scope_importers_of[0])
+    {
+        tt_import_t *imps = NULL;
+        int imp_count = 0;
+        tt_store_get_importers(&store, opts->scope_importers_of,
+                               &imps, &imp_count);
+        scope_map = tt_hashmap_new(imp_count > 4 ? (size_t)imp_count * 2 : 8);
+        /* Include the target file itself */
+        tt_hashmap_set(scope_map, opts->scope_importers_of, (void *)1);
+        for (int i = 0; i < imp_count; i++)
+        {
+            if (imps[i].from_file)
+                tt_hashmap_set(scope_map, imps[i].from_file, (void *)1);
+        }
+        tt_import_array_free(imps, imp_count);
+    }
+
     /* Build filtered result array (apply filter/exclude, unique, sort, limit) */
     /* Step 1: collect passing results into pointer array */
     tt_symbol_result_t **filtered = calloc(sr.count > 0 ? (size_t)sr.count : 1,
@@ -298,6 +380,9 @@ cJSON *tt_cmd_search_symbols_exec(tt_cli_opts_t *opts)
     {
         if (!tt_matches_path_filters(sr.results[i].sym.file,
                                      opts->filter, opts->exclude))
+            continue;
+        if (scope_map && sr.results[i].sym.file &&
+            !tt_hashmap_has(scope_map, sr.results[i].sym.file))
             continue;
         filtered[fcount++] = &sr.results[i];
     }
@@ -345,6 +430,25 @@ cJSON *tt_cmd_search_symbols_exec(tt_cli_opts_t *opts)
             qsort(filtered, (size_t)fcount, sizeof(tt_symbol_result_t *), cmpfn);
     }
 
+    /* Step 3b: token budget */
+    int tokens_used = 0;
+    if (opts->token_budget > 0 && fcount > 0)
+    {
+        int budget_bytes = opts->token_budget * 4;
+        int accumulated = 0, budget_count = 0;
+        for (int i = 0; i < fcount; i++)
+        {
+            int sym_bytes = filtered[i]->sym.byte_length > 0
+                            ? filtered[i]->sym.byte_length : 100;
+            if (accumulated + sym_bytes > budget_bytes && budget_count > 0)
+                break;
+            accumulated += sym_bytes;
+            budget_count++;
+        }
+        fcount = budget_count;
+        tokens_used = (accumulated + 3) / 4; /* ceil(bytes/4) */
+    }
+
     /* Step 4: limit */
     tt_apply_limit(opts->limit, &fcount);
 
@@ -379,6 +483,7 @@ cJSON *tt_cmd_search_symbols_exec(tt_cli_opts_t *opts)
         if (result)
             tt_savings_track(&db, "search_symbols", raw_bytes, result);
 
+        if (scope_map) tt_hashmap_free(scope_map);
         free(filtered);
         tt_search_results_free(&sr);
         tt_store_close(&store);
@@ -389,6 +494,12 @@ cJSON *tt_cmd_search_symbols_exec(tt_cli_opts_t *opts)
 
     /* Step 6: format results */
     cJSON *results_array = cJSON_CreateArray();
+    detail_level_e detail = parse_detail(opts->detail, opts->compact);
+
+    /* For detail=full, cache file contents to extract source code */
+    tt_hashmap_t *file_cache = NULL;
+    if (detail == DETAIL_FULL)
+        file_cache = tt_hashmap_new(64);
 
     /* For debug mode, precompute query words */
     char *dbg_query_lower = NULL;
@@ -401,8 +512,46 @@ cJSON *tt_cmd_search_symbols_exec(tt_cli_opts_t *opts)
 
     for (int i = 0; i < fcount; i++)
     {
-        cJSON *item = format_symbol_result(filtered[i], opts->compact,
-                                           opts->no_sig, opts->no_summary);
+        /* Extract source code for full detail mode */
+        const char *source = NULL;
+        char *source_buf = NULL;
+        if (detail == DETAIL_FULL &&
+            filtered[i]->sym.byte_offset >= 0 &&
+            filtered[i]->sym.byte_length > 0 &&
+            filtered[i]->sym.file)
+        {
+            const char *file_content = tt_hashmap_get(file_cache, filtered[i]->sym.file);
+            if (!file_content) {
+                char *full = tt_path_join(project_path, filtered[i]->sym.file);
+                if (full) {
+                    size_t flen = 0;
+                    char *data = tt_read_file(full, &flen);
+                    free(full);
+                    if (data) {
+                        tt_hashmap_set(file_cache, filtered[i]->sym.file, data);
+                        file_content = data;
+                    }
+                }
+            }
+            if (file_content) {
+                int off = filtered[i]->sym.byte_offset;
+                int len = filtered[i]->sym.byte_length;
+                size_t flen = strlen(file_content);
+                if (off >= 0 && (size_t)(off + len) <= flen) {
+                    source_buf = malloc((size_t)len + 1);
+                    if (source_buf) {
+                        memcpy(source_buf, file_content + off, (size_t)len);
+                        source_buf[len] = '\0';
+                        source = source_buf;
+                    }
+                }
+            }
+        }
+
+        cJSON *item = format_symbol_result(filtered[i], detail,
+                                           opts->no_sig, opts->no_summary,
+                                           source);
+        free(source_buf);
         if (!item) continue;
 
         /* Debug mode: add per-field score breakdown */
@@ -450,19 +599,21 @@ cJSON *tt_cmd_search_symbols_exec(tt_cli_opts_t *opts)
         const int min_widths[] = {12, 30, 4, 20, 40};
         int col_count = 5;
 
-        const char ***rows = calloc(fcount > 0 ? (size_t)fcount : 1,
-                                    sizeof(const char **));
-        /* Temp buffers for line numbers */
-        char **line_bufs = calloc(fcount > 0 ? (size_t)fcount : 1, sizeof(char *));
+        tt_arena_t *tbl_arena = tt_arena_new(4096);
+        const char ***rows = tt_arena_alloc(tbl_arena,
+                                            sizeof(const char **) * (fcount > 0 ? (size_t)fcount : 1));
+        if (rows) memset(rows, 0, sizeof(const char **) * (fcount > 0 ? (size_t)fcount : 1));
 
-        for (int i = 0; i < fcount; i++)
+        for (int i = 0; i < fcount && rows; i++)
         {
-            rows[i] = calloc(5, sizeof(const char *));
+            rows[i] = tt_arena_alloc(tbl_arena, 5 * sizeof(const char *));
+            if (!rows[i]) break;
+            memset(rows[i], 0, 5 * sizeof(const char *));
             rows[i][0] = tt_kind_to_str(filtered[i]->sym.kind);
             rows[i][1] = filtered[i]->sym.file ? filtered[i]->sym.file : "";
-            line_bufs[i] = malloc(16);
-            snprintf(line_bufs[i], 16, "%d", filtered[i]->sym.line);
-            rows[i][2] = line_bufs[i];
+            char *lbuf = tt_arena_alloc(tbl_arena, 16);
+            if (lbuf) snprintf(lbuf, 16, "%d", filtered[i]->sym.line);
+            rows[i][2] = lbuf ? lbuf : "";
             rows[i][3] = filtered[i]->sym.name ? filtered[i]->sym.name : "";
             rows[i][4] = filtered[i]->sym.signature ? filtered[i]->sym.signature : "";
         }
@@ -470,13 +621,7 @@ cJSON *tt_cmd_search_symbols_exec(tt_cli_opts_t *opts)
         tt_render_table(columns, min_widths, col_count, rows, fcount,
                         opts->truncate_width);
 
-        for (int i = 0; i < fcount; i++)
-        {
-            free(line_bufs[i]);
-            free(rows[i]);
-        }
-        free(line_bufs);
-        free(rows);
+        tt_arena_free(tbl_arena);
         cJSON_Delete(results_array);
         result = NULL; /* already printed */
     }
@@ -487,11 +632,24 @@ cJSON *tt_cmd_search_symbols_exec(tt_cli_opts_t *opts)
         cJSON_AddStringToObject(result, "q", query);
         cJSON_AddItemToObject(result, "results", results_array);
         cJSON_AddNumberToObject(result, "n", fcount);
+
+        if (opts->token_budget > 0)
+        {
+            cJSON_AddNumberToObject(result, "token_budget", opts->token_budget);
+            cJSON_AddNumberToObject(result, "tokens_used", tokens_used);
+            cJSON_AddNumberToObject(result, "tokens_remaining",
+                                    opts->token_budget - tokens_used);
+        }
     }
 
     if (result)
         tt_savings_track(&db, "search_symbols", raw_bytes, result);
 
+    if (file_cache) {
+        tt_hashmap_iter(file_cache, free_cache_entry, NULL);
+        tt_hashmap_free(file_cache);
+    }
+    if (scope_map) tt_hashmap_free(scope_map);
     free(filtered);
     tt_search_results_free(&sr);
     tt_store_close(&store);
@@ -790,30 +948,26 @@ cJSON *tt_cmd_search_text_exec(tt_cli_opts_t *opts)
             const char *columns[] = {"hits", "file"};
             const int min_widths[] = {4, 40};
 
-            const char ***rows = calloc(group_count > 0 ? (size_t)group_count : 1,
-                                        sizeof(const char **));
-            char **count_bufs = calloc(group_count > 0 ? (size_t)group_count : 1,
-                                       sizeof(char *));
+            tt_arena_t *tbl_arena = tt_arena_new(4096);
+            size_t gcz = group_count > 0 ? (size_t)group_count : 1;
+            const char ***rows = tt_arena_alloc(tbl_arena, sizeof(const char **) * gcz);
+            if (rows) memset(rows, 0, sizeof(const char **) * gcz);
 
-            for (int i = 0; i < group_count; i++)
+            for (int i = 0; i < group_count && rows; i++)
             {
-                rows[i] = calloc(2, sizeof(const char *));
-                count_bufs[i] = malloc(16);
-                snprintf(count_bufs[i], 16, "%d", counts[i]);
-                rows[i][0] = count_bufs[i];
+                rows[i] = tt_arena_alloc(tbl_arena, 2 * sizeof(const char *));
+                if (!rows[i]) break;
+                memset(rows[i], 0, 2 * sizeof(const char *));
+                char *cbuf = tt_arena_alloc(tbl_arena, 16);
+                if (cbuf) snprintf(cbuf, 16, "%d", counts[i]);
+                rows[i][0] = cbuf ? cbuf : "";
                 rows[i][1] = file_names[i];
             }
 
             tt_render_table(columns, min_widths, 2, rows, group_count,
                             opts->truncate_width);
 
-            for (int i = 0; i < group_count; i++)
-            {
-                free(count_bufs[i]);
-                free(rows[i]);
-            }
-            free(count_bufs);
-            free(rows);
+            tt_arena_free(tbl_arena);
             free(file_names);
             free(counts);
             tt_text_results_free(&text_results);
@@ -887,31 +1041,27 @@ cJSON *tt_cmd_search_text_exec(tt_cli_opts_t *opts)
         const char *columns[] = {"f", "l", "t"};
         const int min_widths[] = {40, 4, 60};
 
-        const char ***rows = calloc(result_count > 0 ? (size_t)result_count : 1,
-                                    sizeof(const char **));
-        char **line_bufs = calloc(result_count > 0 ? (size_t)result_count : 1,
-                                  sizeof(char *));
+        tt_arena_t *tbl_arena = tt_arena_new(4096);
+        size_t rcz = result_count > 0 ? (size_t)result_count : 1;
+        const char ***rows = tt_arena_alloc(tbl_arena, sizeof(const char **) * rcz);
+        if (rows) memset(rows, 0, sizeof(const char **) * rcz);
 
-        for (int i = 0; i < result_count; i++)
+        for (int i = 0; i < result_count && rows; i++)
         {
-            rows[i] = calloc(3, sizeof(const char *));
+            rows[i] = tt_arena_alloc(tbl_arena, 3 * sizeof(const char *));
+            if (!rows[i]) break;
+            memset(rows[i], 0, 3 * sizeof(const char *));
             rows[i][0] = text_results.results[i].file ? text_results.results[i].file : "";
-            line_bufs[i] = malloc(16);
-            snprintf(line_bufs[i], 16, "%d", text_results.results[i].line);
-            rows[i][1] = line_bufs[i];
+            char *lbuf = tt_arena_alloc(tbl_arena, 16);
+            if (lbuf) snprintf(lbuf, 16, "%d", text_results.results[i].line);
+            rows[i][1] = lbuf ? lbuf : "";
             rows[i][2] = text_results.results[i].text ? text_results.results[i].text : "";
         }
 
         tt_render_table(columns, min_widths, 3, rows, result_count,
                         opts->truncate_width);
 
-        for (int i = 0; i < result_count; i++)
-        {
-            free(line_bufs[i]);
-            free(rows[i]);
-        }
-        free(line_bufs);
-        free(rows);
+        tt_arena_free(tbl_arena);
         cJSON_Delete(results_array);
         result = NULL;
     }

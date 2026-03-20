@@ -4,7 +4,7 @@
  * Per-language line-by-line extraction. No regex needed; uses strstr/strncmp.
  *
  * Supported languages:
- *   JS/TS:   import ... from '...',  require('...')
+ *   JS/TS/Vue: import ... from '...',  require('...'),  import('...')
  *   Python:  import ...,  from ... import ...
  *   Go:      import "...",  import (...)
  *   Rust:    use ...;,  mod ...;
@@ -137,6 +137,26 @@ static void extract_js(const char *from_file, const char *line, int line_num,
         if (spec) {
             add_import(arr, count, cap, from_file, spec, NULL, line_num, "require");
             free(spec);
+        }
+    }
+
+    /* Dynamic import: import('...'), import("..."), import(`...`) */
+    {
+        const char *dyn = p;
+        while ((dyn = strstr(dyn, "import(")) != NULL) {
+            /* Skip if preceded by alphanumeric/underscore (e.g. "reimport(") */
+            if (dyn > p && (isalnum((unsigned char)dyn[-1]) || dyn[-1] == '_')) {
+                dyn += 7;
+                continue;
+            }
+            const char *q = skip_ws(dyn + 7);
+            char *spec = read_quoted(&q);
+            if (spec) {
+                add_import(arr, count, cap, from_file, spec, NULL, line_num,
+                           "dynamic_import");
+                free(spec);
+            }
+            dyn += 7;
         }
     }
 }
@@ -433,7 +453,8 @@ static lang_extractor_t get_extractor(const char *language)
     if (strcmp(language, "javascript") == 0 ||
         strcmp(language, "typescript") == 0 ||
         strcmp(language, "tsx") == 0 ||
-        strcmp(language, "jsx") == 0)
+        strcmp(language, "jsx") == 0 ||
+        strcmp(language, "vue") == 0)
         return extract_js;
 
     if (strcmp(language, "python") == 0) return extract_python;
@@ -442,7 +463,10 @@ static lang_extractor_t get_extractor(const char *language)
 
     if (strcmp(language, "c") == 0 ||
         strcmp(language, "c++") == 0 ||
-        strcmp(language, "objectivec") == 0)
+        strcmp(language, "cpp") == 0 ||
+        strcmp(language, "objectivec") == 0 ||
+        strcmp(language, "objc") == 0 ||
+        strcmp(language, "objcpp") == 0)
         return extract_c;
 
     if (strcmp(language, "java") == 0 ||
@@ -455,7 +479,9 @@ static lang_extractor_t get_extractor(const char *language)
         return extract_php;
 
     if (strcmp(language, "ruby") == 0) return extract_ruby;
-    if (strcmp(language, "c#") == 0) return extract_csharp;
+    if (strcmp(language, "c#") == 0 ||
+        strcmp(language, "csharp") == 0)
+        return extract_csharp;
 
     if (strcmp(language, "swift") == 0 ||
         strcmp(language, "haskell") == 0)

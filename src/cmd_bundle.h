@@ -19,4 +19,7 @@
 cJSON *tt_cmd_inspect_bundle_exec(tt_cli_opts_t *opts);
 int tt_cmd_inspect_bundle(tt_cli_opts_t *opts);
 
+/* Render a bundle JSON result as markdown. [caller-frees] */
+char *tt_bundle_render_markdown(const cJSON *result);
+
 #endif /* TT_CMD_BUNDLE_H */

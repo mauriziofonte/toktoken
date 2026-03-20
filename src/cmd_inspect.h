@@ -37,5 +37,10 @@ int tt_cmd_inspect_file(tt_cli_opts_t *opts);
 int tt_cmd_inspect_tree(tt_cli_opts_t *opts);
 int tt_cmd_inspect_dependencies(tt_cli_opts_t *opts);
 int tt_cmd_inspect_hierarchy(tt_cli_opts_t *opts);
+int tt_cmd_inspect_cycles(tt_cli_opts_t *opts);
+int tt_cmd_inspect_blast(tt_cli_opts_t *opts);
+
+cJSON *tt_cmd_inspect_cycles_exec(tt_cli_opts_t *opts);
+cJSON *tt_cmd_inspect_blast_exec(tt_cli_opts_t *opts);
 
 #endif /* TT_CMD_INSPECT_H */

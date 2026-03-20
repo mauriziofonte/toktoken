@@ -24,13 +24,13 @@ Measured across eight codebases from Redis (727 files) to the Linux kernel (65,2
 
 | Codebase | Files | Symbols | Raw source tokens (est.) | 10 targeted queries | Savings factor |
 |----------|-------|---------|--------------------------|---------------------|----------------|
-| **Redis** | 727 | 45,593 | ~1,200,000 | ~8,000 | **150x** |
+| **Redis** | 727 | 45,596 | ~1,200,000 | ~8,000 | **150x** |
 | **curl** | 1,108 | 33,973 | ~1,800,000 | ~8,000 | **225x** |
-| **Laravel** | 2,783 | 39,145 | ~3,500,000 | ~8,000 | **438x** |
-| **Django** | 2,945 | 93,035 | ~5,400,000 | ~8,000 | **675x** |
+| **Laravel** | 2,783 | 39,188 | ~3,500,000 | ~8,000 | **438x** |
+| **Django** | 2,945 | 93,254 | ~5,400,000 | ~8,000 | **675x** |
 | **Neovim** | 3,297 | 56,663 | ~4,200,000 | ~8,000 | **525x** |
 | **Kubernetes** | 12,881 | 294,753 | ~25,000,000 | ~8,000 | **3,125x** |
-| **dotnet/runtime** | 37,668 | 1,241,380 | ~95,000,000 | ~8,000 | **11,875x** |
+| **dotnet/runtime** | 37,668 | 1,241,626 | ~95,000,000 | ~8,000 | **11,875x** |
 | **Linux kernel** | 65,231 | 7,433,275 | ~380,000,000 | ~8,000 | **47,500x** |
 
 The larger the codebase, the greater the savings. TokToken's query cost is nearly constant (~800 tokens per query) regardless of codebase size, while naive file-read cost grows linearly with file count.
@@ -67,7 +67,7 @@ The larger the codebase, the greater the savings. TokToken's query cost is nearl
 | **curl** (34K symbols) | ~30,000 tokens | ~280 tokens | **99.1%** |
 | **Django** (93K symbols) | ~80,000 tokens | ~275 tokens | **99.7%** |
 | **Kubernetes** (295K symbols) | ~150,000 tokens | ~400 tokens | **99.7%** |
-| **dotnet/runtime** (1.2M symbols) | ~500,000 tokens | ~275 tokens | **99.9%** |
+| **dotnet/runtime** (1.24M symbols) | ~500,000 tokens | ~275 tokens | **99.9%** |
 | **Linux kernel** (7.4M symbols) | ~1,000,000 tokens | ~360 tokens | **99.96%** |
 
 *Naive estimate: reading 3-5 files of average size to locate the function.*
@@ -280,4 +280,4 @@ The latency cost of a TokToken query is negligible compared to LLM inference tim
 
 ---
 
-*TokToken v1.0.0 -- Analysis performed 2026-03-17*
+*TokToken v0.2.0 -- Analysis performed 2026-03-19*

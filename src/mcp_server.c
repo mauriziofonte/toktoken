@@ -400,6 +400,263 @@ static void mcp_inject_staleness(tt_mcp_server_t *srv, cJSON *meta)
     }
 }
 
+/* ---- next-step suggestions for LLM workflow guidance ---- */
+
+/*
+ * Extract the first result ID from common response shapes.
+ * Looks for results[0].id, then symbols[0] patterns, then file field.
+ * Returns NULL if nothing found (caller must not free).
+ */
+static const char *first_result_id(const cJSON *result)
+{
+    /* results[0].id — search:symbols, find:dead, find:callers */
+    const cJSON *arr = cJSON_GetObjectItemCaseSensitive(result, "results");
+    if (arr && cJSON_IsArray(arr) && cJSON_GetArraySize(arr) > 0)
+    {
+        const cJSON *first = cJSON_GetArrayItem(arr, 0);
+        const cJSON *id = cJSON_GetObjectItemCaseSensitive(first, "id");
+        if (id && cJSON_IsString(id))
+            return id->valuestring;
+    }
+    /* symbols array — inspect:outline */
+    arr = cJSON_GetObjectItemCaseSensitive(result, "symbols");
+    if (arr && cJSON_IsArray(arr) && cJSON_GetArraySize(arr) > 0)
+    {
+        const cJSON *first = cJSON_GetArrayItem(arr, 0);
+        const cJSON *id = cJSON_GetObjectItemCaseSensitive(first, "id");
+        if (id && cJSON_IsString(id))
+            return id->valuestring;
+    }
+    return NULL;
+}
+
+static const char *first_result_file(const cJSON *result)
+{
+    /* results[0].f or results[0].file — search:text */
+    const cJSON *arr = cJSON_GetObjectItemCaseSensitive(result, "results");
+    if (arr && cJSON_IsArray(arr) && cJSON_GetArraySize(arr) > 0)
+    {
+        const cJSON *first = cJSON_GetArrayItem(arr, 0);
+        const cJSON *f = cJSON_GetObjectItemCaseSensitive(first, "f");
+        if (!f)
+            f = cJSON_GetObjectItemCaseSensitive(first, "file");
+        if (f && cJSON_IsString(f))
+            return f->valuestring;
+    }
+    /* top-level file field — inspect:outline, inspect:bundle */
+    const cJSON *f = cJSON_GetObjectItemCaseSensitive(result, "file");
+    if (f && cJSON_IsString(f))
+        return f->valuestring;
+    return NULL;
+}
+
+static int result_count(const cJSON *result)
+{
+    const cJSON *n = cJSON_GetObjectItemCaseSensitive(result, "n");
+    if (n && cJSON_IsNumber(n))
+        return (int)n->valuedouble;
+    const cJSON *count = cJSON_GetObjectItemCaseSensitive(result, "count");
+    if (count && cJSON_IsNumber(count))
+        return (int)count->valuedouble;
+    const cJSON *arr = cJSON_GetObjectItemCaseSensitive(result, "results");
+    if (arr && cJSON_IsArray(arr))
+        return cJSON_GetArraySize(arr);
+    return -1;
+}
+
+/*
+ * Inject contextual next-step suggestions into the _ttk metadata.
+ * Suggestions use MCP tool names and include concrete IDs from results
+ * so the LLM can act immediately without guessing.
+ */
+static void mcp_inject_next_steps(const char *tool_name,
+                                  const cJSON *tool_result,
+                                  cJSON *ttk)
+{
+    /* Check for error responses — universal suggestion */
+    const cJSON *err = cJSON_GetObjectItemCaseSensitive(tool_result, "error");
+    if (err && cJSON_IsString(err))
+    {
+        if (strcmp(err->valuestring, "no_index") == 0)
+        {
+            cJSON *next = cJSON_AddArrayToObject(ttk, "next");
+            cJSON_AddItemToArray(next, cJSON_CreateString(
+                "index_create — no index exists yet"));
+            return;
+        }
+    }
+
+    /* Prepend stale warning if index is stale */
+    const cJSON *stale = cJSON_GetObjectItemCaseSensitive(ttk, "stale");
+    bool is_stale = (stale && cJSON_IsTrue(stale));
+
+    cJSON *next = cJSON_CreateArray();
+    char buf[512];
+
+    if (is_stale)
+    {
+        cJSON_AddItemToArray(next, cJSON_CreateString(
+            "index_update — index is stale"));
+    }
+
+    const char *fid = first_result_id(tool_result);
+    const char *ffile = first_result_file(tool_result);
+    int cnt = result_count(tool_result);
+
+    /* Tool-specific suggestions */
+    if (strcmp(tool_name, "codebase_detect") == 0)
+    {
+        const cJSON *action = cJSON_GetObjectItemCaseSensitive(
+            tool_result, "action");
+        if (action && cJSON_IsString(action))
+        {
+            if (strcmp(action->valuestring, "index:create") == 0)
+                cJSON_AddItemToArray(next, cJSON_CreateString(
+                    "index_create to build the index"));
+            else
+                cJSON_AddItemToArray(next, cJSON_CreateString(
+                    "search_symbols or inspect_tree to explore"));
+        }
+    }
+    else if (strcmp(tool_name, "index_create") == 0 ||
+             strcmp(tool_name, "index_file") == 0)
+    {
+        cJSON_AddItemToArray(next, cJSON_CreateString(
+            "search_symbols to find code"));
+        cJSON_AddItemToArray(next, cJSON_CreateString(
+            "stats for index info"));
+    }
+    else if (strcmp(tool_name, "index_update") == 0)
+    {
+        const cJSON *changed = cJSON_GetObjectItemCaseSensitive(
+            tool_result, "changed");
+        if (changed && cJSON_IsNumber(changed) && changed->valuedouble > 0)
+            cJSON_AddItemToArray(next, cJSON_CreateString(
+                "search_symbols to find updated code"));
+    }
+    else if (strcmp(tool_name, "search_symbols") == 0)
+    {
+        if (cnt > 0 && fid)
+        {
+            snprintf(buf, sizeof(buf), "inspect_symbol %s", fid);
+            cJSON_AddItemToArray(next, cJSON_CreateString(buf));
+            snprintf(buf, sizeof(buf), "inspect_bundle %s", fid);
+            cJSON_AddItemToArray(next, cJSON_CreateString(buf));
+        }
+        else if (cnt == 0)
+        {
+            cJSON_AddItemToArray(next, cJSON_CreateString(
+                "search_text for full-text fallback"));
+        }
+    }
+    else if (strcmp(tool_name, "search_text") == 0)
+    {
+        if (cnt > 0 && ffile)
+        {
+            snprintf(buf, sizeof(buf), "inspect_outline %s", ffile);
+            cJSON_AddItemToArray(next, cJSON_CreateString(buf));
+        }
+    }
+    else if (strcmp(tool_name, "inspect_outline") == 0)
+    {
+        if (fid)
+        {
+            snprintf(buf, sizeof(buf), "inspect_symbol %s", fid);
+            cJSON_AddItemToArray(next, cJSON_CreateString(buf));
+            snprintf(buf, sizeof(buf), "inspect_bundle %s", fid);
+            cJSON_AddItemToArray(next, cJSON_CreateString(buf));
+        }
+    }
+    else if (strcmp(tool_name, "inspect_symbol") == 0)
+    {
+        const cJSON *id = cJSON_GetObjectItemCaseSensitive(tool_result, "id");
+        if (id && cJSON_IsString(id))
+        {
+            snprintf(buf, sizeof(buf), "inspect_bundle %s", id->valuestring);
+            cJSON_AddItemToArray(next, cJSON_CreateString(buf));
+            snprintf(buf, sizeof(buf), "find_callers %s", id->valuestring);
+            cJSON_AddItemToArray(next, cJSON_CreateString(buf));
+        }
+    }
+    else if (strcmp(tool_name, "inspect_bundle") == 0)
+    {
+        const cJSON *id = cJSON_GetObjectItemCaseSensitive(tool_result, "id");
+        if (id && cJSON_IsString(id))
+        {
+            snprintf(buf, sizeof(buf), "find_callers %s", id->valuestring);
+            cJSON_AddItemToArray(next, cJSON_CreateString(buf));
+        }
+        if (ffile)
+        {
+            snprintf(buf, sizeof(buf), "find_importers %s", ffile);
+            cJSON_AddItemToArray(next, cJSON_CreateString(buf));
+        }
+    }
+    else if (strcmp(tool_name, "find_importers") == 0)
+    {
+        if (cnt > 0 && ffile)
+        {
+            snprintf(buf, sizeof(buf), "inspect_dependencies %s", ffile);
+            cJSON_AddItemToArray(next, cJSON_CreateString(buf));
+        }
+    }
+    else if (strcmp(tool_name, "find_callers") == 0)
+    {
+        if (cnt > 0 && fid)
+        {
+            snprintf(buf, sizeof(buf), "inspect_symbol %s", fid);
+            cJSON_AddItemToArray(next, cJSON_CreateString(buf));
+        }
+    }
+    else if (strcmp(tool_name, "inspect_dependencies") == 0)
+    {
+        cJSON_AddItemToArray(next, cJSON_CreateString(
+            "inspect_cycles to check for circular imports"));
+    }
+    else if (strcmp(tool_name, "find_dead") == 0)
+    {
+        if (cnt > 0 && fid)
+        {
+            snprintf(buf, sizeof(buf), "inspect_symbol %s", fid);
+            cJSON_AddItemToArray(next, cJSON_CreateString(buf));
+        }
+    }
+    else if (strcmp(tool_name, "inspect_blast_radius") == 0)
+    {
+        const cJSON *summary = cJSON_GetObjectItemCaseSensitive(
+            tool_result, "summary");
+        if (summary)
+        {
+            const cJSON *cc = cJSON_GetObjectItemCaseSensitive(
+                summary, "confirmed_count");
+            if (cc && cJSON_IsNumber(cc) && cc->valuedouble > 0)
+            {
+                const cJSON *confirmed = cJSON_GetObjectItemCaseSensitive(
+                    tool_result, "confirmed");
+                if (confirmed && cJSON_IsArray(confirmed) &&
+                    cJSON_GetArraySize(confirmed) > 0)
+                {
+                    const cJSON *first = cJSON_GetArrayItem(confirmed, 0);
+                    const cJSON *cf = cJSON_GetObjectItemCaseSensitive(
+                        first, "file");
+                    if (cf && cJSON_IsString(cf))
+                    {
+                        snprintf(buf, sizeof(buf), "inspect_file %s",
+                                 cf->valuestring);
+                        cJSON_AddItemToArray(next, cJSON_CreateString(buf));
+                    }
+                }
+            }
+        }
+    }
+
+    /* Only add if we have suggestions */
+    if (cJSON_GetArraySize(next) > 0)
+        cJSON_AddItemToObject(ttk, "next", next);
+    else
+        cJSON_Delete(next);
+}
+
 /* ---- tools/call handler ---- */
 
 static cJSON *mcp_handle_tools_call(tt_mcp_server_t *srv,
@@ -493,6 +750,9 @@ static cJSON *mcp_handle_tools_call(tt_mcp_server_t *srv,
         }
         tt_update_info_free(&uinfo);
     }
+
+    /* Inject next-step suggestions for LLM workflow guidance */
+    mcp_inject_next_steps(name, tool_result, tt);
 
     cJSON_AddItemToObject(tool_result, "_ttk", tt);
 

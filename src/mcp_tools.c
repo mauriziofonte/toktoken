@@ -16,6 +16,7 @@
 #include "cmd_github.h"
 #include "cmd_find.h"
 #include "cmd_bundle.h"
+#include "cmd_help.h"
 #include "error.h"
 
 #include <stdlib.h>
@@ -135,6 +136,16 @@ static cJSON *schema_search_symbols(void)
     add_string_prop(props, "file", "Filter by file glob pattern");
     add_boolean_prop(props, "debug",
                      "Include per-field score breakdown (name, sig, summary, keyword, docstring) for each result");
+    add_string_prop(props, "detail_level",
+                    "Result detail: compact (id/name/kind/file/line/byte_length), "
+                    "standard (default, + qname/sig/summary), full (+ end_line/docstring)");
+    add_integer_prop(props, "token_budget",
+                     "Max token budget for results. Results are included until budget is exhausted "
+                     "(byte_length / 4). At least 1 result is always returned.");
+    add_string_prop(props, "scope_imports_of",
+                    "Scope search to files imported by this file (forward import graph)");
+    add_string_prop(props, "scope_importers_of",
+                    "Scope search to files that import this file (reverse import graph)");
 
     cJSON_AddItemToObject(s, "properties", props);
 
@@ -408,6 +419,16 @@ static cJSON *execute_search_symbols(struct tt_mcp_server_t *srv,
         opts.no_sig = mcp_get_bool(arguments, "no_sig");
         opts.no_summary = mcp_get_bool(arguments, "no_summary");
         opts.debug = mcp_get_bool(arguments, "debug");
+
+        v = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(arguments, "detail_level"));
+        if (v)
+            opts.detail = v;
+        opts.token_budget = mcp_get_int_or_default(arguments, "token_budget", 0);
+
+        v = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(arguments, "scope_imports_of"));
+        if (v) opts.scope_imports_of = v;
+        v = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(arguments, "scope_importers_of"));
+        if (v) opts.scope_importers_of = v;
     }
 
     cJSON *result = tt_cmd_search_symbols_exec(&opts);
@@ -729,12 +750,16 @@ static cJSON *schema_inspect_bundle(void)
     cJSON_AddStringToObject(s, "type", "object");
     cJSON *props = cJSON_CreateObject();
 
-    add_string_prop(props, "id", "Symbol ID (from search_symbols results)");
+    add_string_prop(props, "id", "Symbol ID (from search_symbols results). Comma-separated for multi-symbol bundles (max 20).");
     add_string_prop(props, "path", "Project root path (default: cwd)");
     add_boolean_prop(props, "compact", "Use compact output format");
     add_boolean_prop(props, "full",
                      "Include importers (files that depend on this symbol's file)");
     add_boolean_prop(props, "no_sig", "Omit signatures from outline");
+    add_boolean_prop(props, "include_callers",
+                     "Include callers: symbols in other files that reference this symbol");
+    add_string_prop(props, "output_format",
+                    "Output format: 'json' (default) or 'markdown'");
 
     cJSON_AddItemToObject(s, "properties", props);
 
@@ -763,15 +788,31 @@ static cJSON *execute_inspect_bundle(struct tt_mcp_server_t *srv,
     opts.positional = positional;
     opts.positional_count = 1;
 
+    const char *output_format = NULL;
     if (arguments) {
         opts.compact = mcp_get_bool(arguments, "compact");
         opts.full = mcp_get_bool(arguments, "full");
         opts.no_sig = mcp_get_bool(arguments, "no_sig");
+        opts.include_callers = mcp_get_bool(arguments, "include_callers");
+        output_format = cJSON_GetStringValue(
+            cJSON_GetObjectItemCaseSensitive(arguments, "output_format"));
     }
 
     cJSON *result = tt_cmd_inspect_bundle_exec(&opts);
     if (!result)
         return mcp_tool_error(tt_error_get());
+
+    if (output_format && strcmp(output_format, "markdown") == 0) {
+        char *md = tt_bundle_render_markdown(result);
+        cJSON_Delete(result);
+        if (!md)
+            return mcp_tool_error("Failed to render markdown");
+        cJSON *wrap = cJSON_CreateObject();
+        cJSON_AddStringToObject(wrap, "content", md);
+        free(md);
+        return wrap;
+    }
+
     return result;
 }
 
@@ -783,6 +824,9 @@ static cJSON *schema_find_importers(void)
     cJSON_AddStringToObject(s, "type", "object");
     cJSON *props = cJSON_CreateObject();
     add_string_prop(props, "file", "File path to find importers for");
+    add_boolean_prop(props, "has_importers",
+                     "Enrich each result with a has_importers boolean "
+                     "indicating whether the importing file is itself imported");
     add_string_prop(props, "path", "Project root path (default: cwd)");
     cJSON_AddItemToObject(s, "properties", props);
 
@@ -821,6 +865,8 @@ static cJSON *execute_find_importers(struct tt_mcp_server_t *srv,
     tt_cli_opts_t opts;
     init_opts_from_args(&opts, srv, arguments);
     opts.search = file;
+    if (arguments)
+        opts.has_importers = mcp_get_bool(arguments, "has_importers");
 
     cJSON *result = tt_cmd_find_importers_exec(&opts);
     if (!result)
@@ -1086,6 +1132,182 @@ static cJSON *execute_inspect_hierarchy(struct tt_mcp_server_t *srv,
     return result;
 }
 
+/* ---- inspect:cycles ---- */
+
+static cJSON *schema_inspect_cycles(void)
+{
+    cJSON *s = cJSON_CreateObject();
+    cJSON_AddStringToObject(s, "type", "object");
+    cJSON *props = cJSON_CreateObject();
+
+    add_string_prop(props, "path", "Project root path (default: cwd)");
+    add_boolean_prop(props, "cross_dir",
+                     "Show only cross-directory cycles (default: false)");
+    add_integer_prop(props, "min_length",
+                     "Minimum cycle length to include (default: 0, no filter)");
+
+    cJSON_AddItemToObject(s, "properties", props);
+    return s;
+}
+
+static cJSON *execute_inspect_cycles(struct tt_mcp_server_t *srv,
+                                     const cJSON *arguments)
+{
+    tt_cli_opts_t opts;
+    init_opts_from_args(&opts, srv, arguments);
+
+    if (arguments) {
+        opts.cross_dir = mcp_get_bool(arguments, "cross_dir");
+        opts.min_length = mcp_get_int_or_default(arguments, "min_length", 0);
+    }
+
+    cJSON *result = tt_cmd_inspect_cycles_exec(&opts);
+    if (!result)
+        return mcp_tool_error(tt_error_get());
+    return result;
+}
+
+static cJSON *schema_index_file(void)
+{
+    cJSON *s = cJSON_CreateObject();
+    cJSON_AddStringToObject(s, "type", "object");
+    cJSON *props = cJSON_CreateObject();
+
+    add_string_prop(props, "file", "File path to reindex (relative to project root)");
+    add_string_prop(props, "path", "Project root path (default: cwd)");
+
+    cJSON_AddItemToObject(s, "properties", props);
+
+    cJSON *req = cJSON_CreateArray();
+    cJSON_AddItemToArray(req, cJSON_CreateString("file"));
+    cJSON_AddItemToObject(s, "required", req);
+    return s;
+}
+
+static cJSON *execute_index_file(struct tt_mcp_server_t *srv,
+                                 const cJSON *arguments)
+{
+    tt_cli_opts_t opts;
+    init_opts_from_args(&opts, srv, arguments);
+
+    const char *file = cJSON_GetStringValue(
+        cJSON_GetObjectItemCaseSensitive(arguments, "file"));
+    if (!file || !file[0])
+        return mcp_tool_error("Missing required parameter: file");
+
+    opts.search = file;
+
+    cJSON *result = tt_cmd_index_file_exec(&opts);
+    if (!result)
+        return mcp_tool_error(tt_error_get());
+    return result;
+}
+
+static cJSON *schema_find_dead(void)
+{
+    cJSON *s = cJSON_CreateObject();
+    cJSON_AddStringToObject(s, "type", "object");
+    cJSON *props = cJSON_CreateObject();
+
+    add_string_prop(props, "path", "Project root path (default: cwd)");
+    add_string_prop(props, "kind", "Filter by symbol kind (comma-separated: function,class,method,...)");
+    add_string_prop(props, "language", "Filter by language");
+    add_string_prop(props, "exclude", "Exclude files matching pattern (pipe-separated)");
+    add_boolean_prop(props, "exclude_tests", "Exclude test files (default: false)");
+    add_integer_prop(props, "limit", "Max results (default: 100)");
+
+    cJSON_AddItemToObject(s, "properties", props);
+    return s;
+}
+
+static cJSON *execute_find_dead(struct tt_mcp_server_t *srv,
+                                const cJSON *arguments)
+{
+    tt_cli_opts_t opts;
+    init_opts_from_args(&opts, srv, arguments);
+
+    const char *v;
+    v = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(arguments, "kind"));
+    if (v) opts.kind = v;
+    v = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(arguments, "language"));
+    if (v) opts.language = v;
+    v = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(arguments, "exclude"));
+    if (v) opts.exclude = v;
+
+    cJSON *et = cJSON_GetObjectItemCaseSensitive(arguments, "exclude_tests");
+    if (cJSON_IsBool(et))
+        opts.exclude_tests = cJSON_IsTrue(et);
+
+    opts.limit = mcp_get_int_or_default(arguments, "limit", 0);
+
+    cJSON *result = tt_cmd_find_dead_exec(&opts);
+    if (!result)
+        return mcp_tool_error(tt_error_get());
+    return result;
+}
+
+static cJSON *schema_inspect_blast_radius(void)
+{
+    cJSON *s = cJSON_CreateObject();
+    cJSON_AddStringToObject(s, "type", "object");
+    cJSON *props = cJSON_CreateObject();
+
+    add_string_prop(props, "id", "Symbol ID to analyze blast radius for (required)");
+    add_integer_prop(props, "depth", "Max BFS depth on reverse import graph (1-3, default: 2)");
+    add_string_prop(props, "path", "Project root path (default: cwd)");
+
+    cJSON_AddItemToObject(s, "properties", props);
+
+    cJSON *req = cJSON_CreateArray();
+    cJSON_AddItemToArray(req, cJSON_CreateString("id"));
+    cJSON_AddItemToObject(s, "required", req);
+    return s;
+}
+
+static cJSON *execute_inspect_blast_radius(struct tt_mcp_server_t *srv,
+                                           const cJSON *arguments)
+{
+    tt_cli_opts_t opts;
+    init_opts_from_args(&opts, srv, arguments);
+
+    const char *id = cJSON_GetStringValue(
+        cJSON_GetObjectItemCaseSensitive(arguments, "id"));
+    if (!id || !id[0])
+        return mcp_tool_error("Missing required parameter: id");
+
+    opts.search = id;
+
+    int depth = mcp_get_int_or_default(arguments, "depth", 0);
+    if (depth > 0)
+        opts.depth = depth;
+
+    cJSON *result = tt_cmd_inspect_blast_exec(&opts);
+    if (!result)
+        return mcp_tool_error(tt_error_get());
+    return result;
+}
+
+/* ---- help ---- */
+
+static cJSON *schema_help(void)
+{
+    cJSON *s = cJSON_CreateObject();
+    cJSON_AddStringToObject(s, "type", "object");
+    cJSON *props = cJSON_AddObjectToObject(s, "properties");
+    add_string_prop(props, "command",
+                    "Tool name (e.g. 'search_symbols' or 'search:symbols'). "
+                    "Omit to list all tools.");
+    return s;
+}
+
+static cJSON *execute_help(struct tt_mcp_server_t *srv, const cJSON *arguments)
+{
+    (void)srv;
+    const char *command = cJSON_GetStringValue(
+        cJSON_GetObjectItemCaseSensitive(arguments, "command"));
+    return tt_cmd_help_exec(command);
+}
+
 /* ---- Tool registration table ---- */
 
 const tt_mcp_tool_t TT_MCP_TOOLS[] = {
@@ -1177,6 +1399,26 @@ const tt_mcp_tool_t TT_MCP_TOOLS[] = {
      "Show class/function hierarchy with parent-child relationships. Displays nested symbol structure from parent_id linkage.",
      schema_inspect_hierarchy,
      execute_inspect_hierarchy},
+    {"inspect_cycles",
+     "Detect circular import cycles in the codebase using Tarjan's SCC algorithm. Returns all file-level import cycles with cross-directory detection.",
+     schema_inspect_cycles,
+     execute_inspect_cycles},
+    {"inspect_blast_radius",
+     "Analyze the blast radius of a symbol: BFS on reverse import graph to find all files that could be affected by changes. Returns confirmed (name found in file) and potential (transitive dependency) impact.",
+     schema_inspect_blast_radius,
+     execute_inspect_blast_radius},
+    {"find_dead",
+     "Find unreferenced symbols: 'dead' (file has no importers) or 'unreferenced' (file imported but symbol not referenced by name). Entry points (main, init, test_*, etc.) excluded automatically.",
+     schema_find_dead,
+     execute_find_dead},
+    {"index_file",
+     "Reindex a single file without rebuilding the entire index. Compares content hash and skips if unchanged. Fast: <100ms for typical files.",
+     schema_index_file,
+     execute_index_file},
+    {"help",
+     "Get usage details for a TokToken tool, or list all tools. Returns parameters, types, defaults, and descriptions.",
+     schema_help,
+     execute_help},
 };
 
 const int TT_MCP_TOOLS_COUNT = sizeof(TT_MCP_TOOLS) / sizeof(TT_MCP_TOOLS[0]);

@@ -25,18 +25,22 @@ and detects all changes including uncommitted edits.
 - `toktoken search:text "<query>"` -- full-text search (supports pipe OR: "cache|ttl")
 - `toktoken inspect:outline "<file>"` -- file structure
 - `toktoken inspect:symbol "<id>"` -- retrieve source code for a specific symbol
-- `toktoken inspect:bundle "<id>"` -- symbol context bundle (definition + imports + outline)
+- `toktoken inspect:bundle "<id>[,<id2>,...]"` -- symbol context bundle (definition + imports + outline); accepts comma-separated IDs, max 20
+- `toktoken inspect:blast "<id>"` -- symbol blast radius analysis (impact of changing a symbol)
+- `toktoken inspect:cycles` -- detect circular import cycles
 - `toktoken inspect:file "<file>" --lines START-END` -- file content slice
 - `toktoken inspect:tree` -- file tree
 - `toktoken find:importers "<file>"` -- find files that import a given file
 - `toktoken find:references "<id>"` -- find import references to an identifier
 - `toktoken find:callers "<id>"` -- find symbols that likely call a function
+- `toktoken find:dead` -- find unreferenced symbols
 - `toktoken search:cooccurrence "<a>,<b>"` -- find symbols co-occurring in same file
 - `toktoken search:similar "<id>"` -- find similar symbols by name/summary
 - `toktoken inspect:dependencies "<file>"` -- trace transitive import graph
 - `toktoken inspect:hierarchy "<file>"` -- show class/function parent-child hierarchy
 - `toktoken stats` -- index statistics
 - `toktoken index:update` -- refresh after edits
+- `toktoken index:file "<file>"` -- reindex a single file
 
 ## Key Flags
 
@@ -49,6 +53,14 @@ and detects all changes including uncommitted edits.
 - `--no-sig --no-summary` -- minimal output for discovery queries
 - `--context N` / `-C N` -- context lines around matches
 - `--debug` -- show per-field score breakdown in search results
+- `--detail compact|standard|full` -- result detail level for search:symbols
+- `--token-budget N` -- max token budget for search results (truncates gracefully)
+- `--scope-imports-of <file>` -- scope search to files imported by the given file
+- `--scope-importers-of <file>` -- scope search to files that import the given file
+- `--has-importers` -- add has_importers flag to find:importers results
+- `--include-callers` -- include callers in inspect:bundle output
+- `--exclude-tests` -- exclude test files from results (find:dead)
+- `--format markdown` -- markdown output for inspect:bundle
 
 ## Smart Filter Awareness
 

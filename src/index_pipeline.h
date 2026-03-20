@@ -70,6 +70,7 @@ typedef struct
     int max_file_size_bytes;
     tt_database_t *db;
     tt_index_store_t *store;
+    bool incremental;            /* true = keep FTS triggers active (single-file reindex) */
 } tt_pipeline_config_t;
 
 /* ===== Pipeline result ===== */

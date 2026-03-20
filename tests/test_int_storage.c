@@ -52,7 +52,7 @@ TT_TEST(test_schema_create_and_version)
     TT_ASSERT_EQ_INT(rc, 0);
 
     ver = tt_schema_check_version(db);
-    TT_ASSERT_EQ_INT(ver, 3);
+    TT_ASSERT_EQ_INT(ver, 4);
 
     /* Idempotent */
     rc = tt_schema_create(db);
@@ -72,7 +72,7 @@ TT_TEST(test_schema_migrate)
     TT_ASSERT_EQ_INT(rc, 0);
 
     int ver = tt_schema_check_version(db);
-    TT_ASSERT_EQ_INT(ver, 3);
+    TT_ASSERT_EQ_INT(ver, 4);
 
     sqlite3_close(db);
     free(db_path);
@@ -736,7 +736,7 @@ TT_TEST(test_store_schema_version_metadata)
 
     char *ver = tt_store_get_metadata(&store, "schema_version");
     TT_ASSERT_NOT_NULL(ver);
-    TT_ASSERT_EQ_STR(ver, "3");
+    TT_ASSERT_EQ_STR(ver, "4");
     free(ver);
 
     tt_store_close(&store);

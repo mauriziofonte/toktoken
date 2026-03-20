@@ -37,5 +37,8 @@ cJSON *tt_cmd_index_update_exec(tt_cli_opts_t *opts);
 
 int tt_cmd_index_create(tt_cli_opts_t *opts);
 int tt_cmd_index_update(tt_cli_opts_t *opts);
+int tt_cmd_index_file(tt_cli_opts_t *opts);
+
+cJSON *tt_cmd_index_file_exec(tt_cli_opts_t *opts);
 
 #endif /* TT_CMD_INDEX_H */

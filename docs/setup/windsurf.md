@@ -49,7 +49,11 @@ By default, Windsurf prompts for approval each time an MCP tool is called. Ask t
                 "projects_list",
                 "cache_clear",
                 "find_importers",
-                "find_references"
+                "find_references",
+                "inspect_blast_radius",
+                "inspect_cycles",
+                "find_dead",
+                "index_file"
             ]
         }
     }

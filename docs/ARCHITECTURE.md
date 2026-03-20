@@ -27,7 +27,7 @@ Symbol Scorer / Text Search
 
 ### CLI Mode
 
-`main.c` parses arguments via `cli.c`, dispatches to the appropriate `tt_cmd_*` function in `cmd_*.c`. Commands include `cmd_index.c` (index:create/update), `cmd_search.c` (search:symbols/text/cooccurrence/similar), `cmd_inspect.c` (inspect:outline/symbol/file/tree/dependencies/hierarchy), `cmd_bundle.c` (inspect:bundle), `cmd_find.c` (find:importers/references/callers), `cmd_github.c` (index:github), `cmd_manage.c` (stats/projects:list/cache:clear/codebase:detect), and `cmd_serve.c` (serve). Commands use `index_store.c` for all database operations. The `cmd_update.c` module handles `--self-update`: it downloads the latest release binary, verifies SHA-256, and atomically replaces the running executable.
+`main.c` parses arguments via `cli.c`, dispatches to the appropriate `tt_cmd_*` function in `cmd_*.c`. Commands include `cmd_index.c` (index:create/update), `cmd_index.c` (index:file), `cmd_search.c` (search:symbols/text/cooccurrence/similar), `cmd_inspect.c` (inspect:outline/symbol/file/tree/dependencies/hierarchy/cycles/blast), `cmd_bundle.c` (inspect:bundle), `cmd_find.c` (find:importers/references/callers/dead), `cmd_github.c` (index:github), `cmd_manage.c` (stats/projects:list/cache:clear/codebase:detect), `cmd_help.c` (help), and `cmd_serve.c` (serve). Commands use `index_store.c` for all database operations. The `cmd_update.c` module handles `--self-update`: it downloads the latest release binary, verifies SHA-256, and atomically replaces the running executable.
 
 ### MCP Mode
 
@@ -108,7 +108,7 @@ SQLite is opened with 6 PRAGMAs: `journal_mode=WAL` (concurrent reads), `foreign
 
 ### Schema
 
-Current schema version: **3**. Tables:
+Current schema version: **4**. Tables:
 
 | Table | Purpose |
 | ----- | ------- |
@@ -117,13 +117,15 @@ Current schema version: **3**. Tables:
 | `symbols` | Extracted symbols with name, kind, signature, byte offsets |
 | `imports` | Import/include relationships between files |
 | `symbols_fts` | FTS5 virtual table for full-text search on symbols |
+| `file_centrality` | Import-graph centrality scores per file (v4) |
 | `savings_totals` | Cumulative token savings metrics |
+| `savings_per_tool` | Per-tool token savings breakdown (v4) |
 
-The migration backbone in `schema.c` supports schema upgrades via sequential `if (version < N)` checks. The v2→v3 migration removed 4 redundant B-tree indexes (`idx_symbols_name`, `idx_symbols_kind`, `idx_symbols_language`, `idx_symbols_qualified`) and added `idx_symbols_parent ON symbols(parent_id)` for hierarchy queries.
+The migration backbone in `schema.c` supports schema upgrades via sequential `if (version < N)` checks. The v2→v3 migration removed 4 redundant B-tree indexes. The v3→v4 migration added the `file_centrality` table for import-graph-based ranking in search results.
 
 ### Indexes
 
-Schema v3 maintains 3 B-tree indexes on `symbols`, 1 on `files`, and 3 on `imports`:
+Schema v4 maintains 3 B-tree indexes on `symbols`, 1 on `files`, and 4 on `imports`:
 
 | Index | Columns | Used by |
 | ----- | ------- | ------- |
@@ -133,6 +135,7 @@ Schema v3 maintains 3 B-tree indexes on `symbols`, 1 on `files`, and 3 on `impor
 | `idx_files_language` | (language) | stats |
 | `idx_imports_source` | (source_file) | delete by file |
 | `idx_imports_target` | (target_name) | find:importers, inspect:dependencies, find:callers |
+| `idx_imports_resolved` | (resolved_file) | inspect:cycles, inspect:blast, centrality computation |
 | `idx_imports_kind` | (kind) | find:references |
 
 During bulk insert (`index:create`), secondary indexes are dropped and rebuilt after all data is inserted. This avoids incremental B-tree maintenance during high-throughput writes.
@@ -144,10 +147,10 @@ Storage scales linearly with symbol count at approximately 0.7 KB/symbol. Benchm
 | Scale | Example | Files | Symbols | DB size |
 | ----- | ------- | ----- | ------- | ------- |
 | Small | curl | 1,108 | 33,973 | 20 MB |
-| Medium | Django | 2,945 | 93,035 | 72 MB |
-| Large | Kubernetes | 12,881 | 294,753 | 329 MB |
-| Very large | dotnet/runtime | 37,668 | 1,241,380 | 1,298 MB |
-| Massive | Linux kernel | 65,231 | 7,433,275 | 5,156 MB |
+| Medium | Django | 2,945 | 93,254 | 72 MB |
+| Large | Kubernetes | 12,881 | 294,753 | 331 MB |
+| Very large | dotnet/runtime | 37,668 | 1,241,626 | 1,344 MB |
+| Massive | Linux kernel | 65,231 | 7,433,275 | 5,188 MB |
 
 ---
 
@@ -161,29 +164,32 @@ The pipeline runs 16 parallel ctags workers with an MPSC queue feeding a single 
 
 | Phase | curl (1K files) | Kubernetes (13K files) | Linux (65K files) |
 | ----- | --------------- | ---------------------- | ----------------- |
-| Discovery | 21 ms | 301 ms | 2,166 ms |
-| Pipeline (ctags + DB writes) | 528 ms | 3,021 ms | 57,571 ms |
-| Summary generation | 110 ms | 1,280 ms | 30,654 ms |
-| Schema rebuild (B-tree + FTS5) | 109 ms | 1,393 ms | 37,881 ms |
-| **Total** | **0.80 s** | **6.11 s** | **130.18 s** |
+| Discovery | 32 ms | 813 ms | 2,080 ms |
+| Pipeline (ctags + DB writes) | 517 ms | 3,520 ms | 59,560 ms |
+| Summary generation | 86 ms | 1,300 ms | 30,380 ms |
+| Schema rebuild (B-tree + FTS5 + centrality) | 109 ms | 2,200 ms | 59,270 ms |
+| **Total** | **0.80 s** | **10.13 s** | **171.17 s** |
 
-Schema rebuild (B-tree index creation + FTS5 rebuild) accounts for 14-29% of total time. The v2→v3 index reduction (7 → 3 B-tree indexes on `symbols`) reduced this cost by ~40% on large codebases.
+Schema rebuild (B-tree index creation + FTS5 rebuild + centrality computation) accounts for 14-35% of total time.
 
 ### Query latency
 
-All MCP tool queries return in under 200 ms on projects up to 65K files. Most return in under 20 ms:
+All MCP tool queries return in under 500 ms on projects up to 65K files. Most return in under 50 ms:
 
 | Operation | Small (< 3K files) | Large (13K-65K files) |
 | --------- | ------------------ | --------------------- |
-| search:symbols | 12-17 ms | 19-46 ms |
-| inspect:symbol | 11-17 ms | 11 ms |
-| inspect:outline | 1-17 ms | 11-21 ms |
-| inspect:bundle | 1-16 ms | 10-19 ms |
-| search:text | 28-122 ms | 51-137 ms |
+| search:symbols | 13-17 ms | 25-418 ms |
+| inspect:symbol | 12-19 ms | 13-14 ms |
+| inspect:outline | 15-49 ms | 7-24 ms |
+| inspect:bundle | 17-49 ms | 8-14 ms |
+| search:text | 25-118 ms | 36-103 ms |
+| inspect:cycles | 3-14 ms | 35-653 ms |
+| inspect:blast | 3-55 ms | 2-3 ms |
+| find:dead | 3-5 ms | 6-21 ms |
 
 ### Memory
 
-Peak RSS during indexing scales with symbol count. For typical projects (< 100K symbols), peak RSS stays under 400 MB. The Linux kernel (7.4M symbols) peaks at ~4 GB.
+Peak RSS during indexing scales with symbol count. For typical projects (< 100K symbols), peak RSS stays under 130 MB. The Linux kernel (7.4M symbols) peaks at ~4.0 GB.
 
 ---
 

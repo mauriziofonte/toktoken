@@ -44,6 +44,7 @@ static void full_ensure_index(void)
 
 /* ---- Helper: search for a symbol and return a cJSON field ---- */
 
+__attribute__((unused))
 static cJSON *full_search_symbol(const char *query, const char *extra_flags)
 {
     if (!g_full_indexed) return NULL;
@@ -61,6 +62,7 @@ static cJSON *full_search_symbol(const char *query, const char *extra_flags)
 }
 
 /* Extract first symbol ID from a search result. Returns static buffer. */
+__attribute__((unused))
 static const char *full_first_symbol_id(cJSON *search_json)
 {
     static char id_buf[512];

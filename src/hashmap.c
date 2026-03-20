@@ -48,7 +48,9 @@ static size_t next_pow2(size_t n)
     n |= n >> 4;
     n |= n >> 8;
     n |= n >> 16;
+#if SIZE_MAX > 0xFFFFFFFFUL
     n |= n >> 32;
+#endif
     return n + 1;
 }
 

@@ -499,7 +499,10 @@ TT_TEST(test_int_ff_path_validation)
         char target[2048], link_path[2048];
         snprintf(target, sizeof(target), "%s/inside/file.txt", tmpdir);
         snprintf(link_path, sizeof(link_path), "%s/inside/link.txt", tmpdir);
-        symlink(target, link_path);
+        if (symlink(target, link_path) != 0) {
+            TT_ASSERT(0, "symlink() failed for inside link");
+            return;
+        }
 
         TT_ASSERT(!tt_is_symlink_escape(link_path, tmpdir),
                   "symlink inside root should NOT be escape");
@@ -509,7 +512,10 @@ TT_TEST(test_int_ff_path_validation)
     {
         char link_path[2048];
         snprintf(link_path, sizeof(link_path), "%s/inside/outside_link.txt", tmpdir);
-        symlink("/etc/hosts", link_path);
+        if (symlink("/etc/hosts", link_path) != 0) {
+            TT_ASSERT(0, "symlink() failed for outside link");
+            return;
+        }
 
         TT_ASSERT(tt_is_symlink_escape(link_path, tmpdir),
                   "symlink to /etc/hosts should be escape");

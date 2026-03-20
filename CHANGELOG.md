@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.0] - Unreleased
+## [0.2.0] - 2026-03-20
 
 ### Added
 
@@ -101,6 +101,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Import extractor tests**: Vue import extraction, dynamic import extraction (`import()`), `reimport()` negative test.
 - **Token savings tests**: per-tool breakdown, empty state, reset behavior.
 - **Updated assertions**: schema version 3 → 4, MCP tool count 21 → 26, compact mode field expectations.
+
+### Fixed
+
+- **ARM 32-bit portability**: guarded `n >> 32` in `hashmap.c` with `#if SIZE_MAX > 0xFFFFFFFFUL` to avoid shift-count-overflow warning on 32-bit targets.
+- **Empty translation unit warning**: added `#else` typedef in `platform.c` to suppress `-Wpedantic` warning on Windows/MinGW builds.
+- **Unused variable warnings**: removed dead variables `line_start` (`index_pipeline.c`) and `resolved_count` (`index_store.c`).
+- **Unchecked return values**: added error handling for `write()` in `index_pipeline.c` and `test_int_ctags_stream.c`, and for `symlink()` in `test_int_file_filter.c`.
+- **E2E test binary discovery**: added `TOKTOKEN_BIN` environment variable override in test helpers for CI environments with non-standard build paths.
+- **Unused static function warnings**: added `__attribute__((unused))` to helper functions in `test_e2e_full_helpers.h`.
 
 ### Changed
 

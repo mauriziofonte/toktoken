@@ -1914,7 +1914,6 @@ int tt_store_resolve_imports(tt_index_store_t *store)
 
     sqlite3_exec(db, "BEGIN", NULL, NULL, NULL);
 
-    int resolved_count = 0;
     while (sqlite3_step(imp_stmt) == SQLITE_ROW)
     {
         int imp_id = sqlite3_column_int(imp_stmt, 0);
@@ -2178,7 +2177,6 @@ int tt_store_resolve_imports(tt_index_store_t *store)
             sqlite3_bind_int(upd_stmt, 2, imp_id);
             sqlite3_step(upd_stmt);
             sqlite3_reset(upd_stmt);
-            resolved_count++;
         }
 
         free(rel_resolved);

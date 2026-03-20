@@ -11,7 +11,7 @@ Real numbers from [Redis](https://github.com/redis/redis) (727 files, 45K symbol
 | `processCommand()` in `server.c` | 84,193 tokens | 4,412 tokens | **95%** |
 | `redisCommandProc` typedef in `server.h` (4503 lines) | 56,754 tokens | 50 tokens | **99%** |
 
-**TokToken** scales well. Check it on the [Linux kernel](https://github.com/torvalds/linux) (65K files, 7.4M symbols) indexes in ~130 seconds:
+**TokToken** scales well. Check it on the [Linux kernel](https://github.com/torvalds/linux) (65K files, 7.4M symbols) indexes in ~170 seconds:
 
 | What your agent needs | Without TokToken | With TokToken | Savings |
 | --------------------- | ---------------- | ------------- | ------- |

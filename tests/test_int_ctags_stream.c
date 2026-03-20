@@ -64,8 +64,13 @@ static char *write_file_list(const char *const *paths, int count)
 
     for (int i = 0; i < count; i++)
     {
-        write(fd, paths[i], strlen(paths[i]));
-        write(fd, "\n", 1);
+        if (write(fd, paths[i], strlen(paths[i])) < 0 ||
+            write(fd, "\n", 1) < 0)
+        {
+            close(fd);
+            free(tmpfile_path);
+            return NULL;
+        }
     }
     close(fd);
     return tmpfile_path;

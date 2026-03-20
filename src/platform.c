@@ -986,4 +986,7 @@ int tt_file_set_executable(const char *path)
     return 0;
 }
 
+#else
+/* Avoid ISO C empty translation unit warning (-Wpedantic) on Windows builds. */
+typedef int tt_platform_unix_unused;
 #endif /* !TT_PLATFORM_WINDOWS */

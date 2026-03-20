@@ -25,6 +25,13 @@ static inline const char *tt_e2e_binary(void)
     if (resolved) return path[0] ? path : NULL;
     resolved = 1;
 
+    /* Allow override via environment variable */
+    const char *env = getenv("TOKTOKEN_BIN");
+    if (env && access(env, X_OK) == 0) {
+        snprintf(path, sizeof(path), "%s", env);
+        return path;
+    }
+
     const char *candidates[] = {
         "./toktoken",
         "./build/toktoken",

@@ -975,7 +975,6 @@ static void extract_js_constants(const char *project_root,
 
     while (*p) {
         /* Find start of line, skip whitespace */
-        const char *line_start = p;
         while (*p == ' ' || *p == '\t') p++;
 
         /* Check for optional `export ` prefix */
@@ -1266,7 +1265,22 @@ static void *worker_fn(void *arg)
         tt_strbuf_append_char(&file_list, '/');
         tt_strbuf_append_str(&file_list, ctx->file_paths[i]);
     }
-    (void)write(fd, file_list.data, file_list.len);
+    if (write(fd, file_list.data, file_list.len) < 0)
+    {
+        close(fd);
+        tt_strbuf_free(&file_list);
+        unlink(tmp_path);
+        tt_symbol_batch_t *sentinel = batch_alloc();
+        if (sentinel)
+        {
+            sentinel->is_sentinel = true;
+            sentinel->has_error = true;
+            sentinel->error_msg = tt_strdup("failed to write file list to temp file");
+            enqueue_batch(sentinel, ctx);
+        }
+        local_batch_destroy(&lb);
+        return NULL;
+    }
     close(fd);
     tt_strbuf_free(&file_list);
 

@@ -6,7 +6,7 @@ System architecture for developers and contributors.
 
 ## Data Flow
 
-```
+```text
 CLI / MCP Server
     |
     v
@@ -27,7 +27,20 @@ Symbol Scorer / Text Search
 
 ### CLI Mode
 
-`main.c` parses arguments via `cli.c`, dispatches to the appropriate `tt_cmd_*` function in `cmd_*.c`. Commands include `cmd_index.c` (index:create/update), `cmd_index.c` (index:file), `cmd_search.c` (search:symbols/text/cooccurrence/similar), `cmd_inspect.c` (inspect:outline/symbol/file/tree/dependencies/hierarchy/cycles/blast), `cmd_bundle.c` (inspect:bundle), `cmd_find.c` (find:importers/references/callers/dead), `cmd_github.c` (index:github), `cmd_manage.c` (stats/projects:list/cache:clear/codebase:detect), `cmd_help.c` (help), and `cmd_serve.c` (serve). Commands use `index_store.c` for all database operations. The `cmd_update.c` module handles `--self-update`: it downloads the latest release binary, verifies SHA-256, and atomically replaces the running executable.
+`main.c` parses arguments via `cli.c`, dispatches to the appropriate `tt_cmd_*` function. All commands use `index_store.c` for database operations.
+
+| Module | Commands |
+| ------ | -------- |
+| `cmd_index.c` | `index:create`, `index:update`, `index:file` |
+| `cmd_search.c` | `search:symbols`, `search:text`, `search:cooccurrence`, `search:similar` |
+| `cmd_inspect.c` | `inspect:outline`, `inspect:symbol`, `inspect:file`, `inspect:tree`, `inspect:dependencies`, `inspect:hierarchy`, `inspect:cycles`, `inspect:blast` |
+| `cmd_bundle.c` | `inspect:bundle` |
+| `cmd_find.c` | `find:importers`, `find:references`, `find:callers`, `find:dead` |
+| `cmd_github.c` | `index:github` |
+| `cmd_manage.c` | `stats`, `projects:list`, `cache:clear`, `codebase:detect` |
+| `cmd_help.c` | `help` |
+| `cmd_serve.c` | `serve` (MCP server) |
+| `cmd_update.c` | `--self-update` (SHA-256 verified binary replacement) |
 
 ### MCP Mode
 
@@ -53,9 +66,9 @@ Symbol Scorer / Text Search
 
 When active, the smart filter applies two additional exclusion layers during file discovery:
 
-1. **Non-code extensions**: CSS, SCSS, LESS, SASS, HTML, HTM, SVG, TOML, GraphQL, XML, XUL, YAML, YML are excluded because ctags extracts selectors/tags as "symbols" that pollute search results (e.g., 38,000 CSS class selectors vs. actual code functions).
+1. **Non-code extensions**: CSS, SCSS, LESS, SASS, HTML, HTM, SVG, TOML, GraphQL, XML, XUL, YAML, YML are excluded because ctags extracts selectors/tags as "symbols" that pollute search results (e.g., 38,000 CSS class selectors vs. actual code functions). **Exception:** Markdown files (`.md`, `.markdown`, `.mdx`) are always indexed regardless of the smart filter — headings produce high-quality documentation symbols (chapter, section, subsection).
 
-2. **Vendor manifest detection**: Subdirectories containing package manager manifests (composer.json, package.json, setup.py, Cargo.toml, go.mod, pom.xml, build.gradle, Gemfile, pyproject.toml) are pruned as likely vendored third-party code.
+2. **Vendor manifest detection**: Subdirectories containing package manager manifests (composer.json, package.json, setup.py, pyproject.toml, Cargo.toml, go.mod, pom.xml, build.gradle) are pruned as likely vendored third-party code.
 
 Disable with `--full` flag, `"smart_filter": false` in config, or the `full` MCP parameter.
 

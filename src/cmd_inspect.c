@@ -294,7 +294,8 @@ cJSON *tt_cmd_inspect_outline_exec(tt_cli_opts_t *opts)
         tt_database_close(&db);
         cJSON *err = make_error("invalid_kind", "Unknown kind filter value.",
                                 "Valid kinds: class, interface, trait, enum, function, "
-                                "method, constant, property, variable, namespace, type, directive");
+                                "method, constant, property, variable, namespace, type, "
+                                "directive, chapter, section, subsection");
         cJSON_AddStringToObject(err, "invalid_value", invalid_kind);
         free(invalid_kind);
         free(project_path);

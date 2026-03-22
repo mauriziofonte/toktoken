@@ -117,8 +117,10 @@ static cJSON *schema_search_symbols(void)
     add_string_prop(props, "query", "Search query to find symbols by name");
     add_string_prop(props, "path", "Project root path (default: cwd)");
     add_string_prop(props, "kind",
-                    "Comma-separated symbol kinds: class,method,function,property,"
-                    "variable,interface,trait,constant");
+                    "Comma-separated symbol kinds. "
+                    "Code: class,method,function,property,variable,interface,"
+                    "trait,constant,enum,namespace,type,directive. "
+                    "Documentation: chapter,section,subsection");
     add_integer_prop(props, "limit", "Maximum number of output results");
     add_integer_prop(props, "max", "Maximum index query results (default: 50, max: 200)");
     add_string_prop(props, "filter",
@@ -194,7 +196,11 @@ static cJSON *schema_inspect_outline(void)
 
     add_string_prop(props, "file", "Relative file path to inspect");
     add_string_prop(props, "path", "Project root path (default: cwd)");
-    add_string_prop(props, "kind", "Comma-separated symbol kinds to include");
+    add_string_prop(props, "kind",
+                    "Comma-separated symbol kinds. "
+                    "Code: class,method,function,property,variable,interface,"
+                    "trait,constant,enum,namespace,type,directive. "
+                    "Documentation: chapter,section,subsection");
     add_boolean_prop(props, "compact", "Use compact output format");
     add_boolean_prop(props, "no_sig", "Omit signatures");
     add_boolean_prop(props, "no_summary", "Omit summaries");
@@ -1210,7 +1216,10 @@ static cJSON *schema_find_dead(void)
     cJSON *props = cJSON_CreateObject();
 
     add_string_prop(props, "path", "Project root path (default: cwd)");
-    add_string_prop(props, "kind", "Filter by symbol kind (comma-separated: function,class,method,...)");
+    add_string_prop(props, "kind",
+                    "Filter by symbol kind (comma-separated). "
+                    "Code: function,class,method,... "
+                    "Documentation: chapter,section,subsection");
     add_string_prop(props, "language", "Filter by language");
     add_string_prop(props, "exclude", "Exclude files matching pattern (pipe-separated)");
     add_boolean_prop(props, "exclude_tests", "Exclude test files (default: false)");
@@ -1328,7 +1337,7 @@ const tt_mcp_tool_t TT_MCP_TOOLS[] = {
      schema_index_update,
      execute_index_update},
     {"search_symbols",
-     "Search symbols by name (functions, classes, methods, etc.). Returns IDs usable with inspect_symbol to retrieve full source code.",
+     "Search symbols by name (functions, classes, methods, headings, etc.). Returns IDs usable with inspect_symbol to retrieve full source code.",
      schema_search_symbols,
      execute_search_symbols},
     {"search_text",
@@ -1336,7 +1345,7 @@ const tt_mcp_tool_t TT_MCP_TOOLS[] = {
      schema_search_text,
      execute_search_text},
     {"inspect_outline",
-     "Show the symbol outline of a file: nested functions, classes, methods with line numbers and signatures.",
+     "Show the symbol outline of a file: nested functions, classes, methods, headings with line numbers and signatures.",
      schema_inspect_outline,
      execute_inspect_outline},
     {"inspect_symbol",

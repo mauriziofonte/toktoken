@@ -137,23 +137,23 @@ This must print `toktoken X.Y.Z`. If it fails, the binary is not in PATH or the 
 
 TokToken supports two integration modes:
 
-- **MCP server** (preferred): `toktoken serve` -- the agent calls tools directly via Model Context Protocol
+- **MCP server** (preferred): `toktoken serve` -- the agent calls tools directly via Model Context Protocol (stdio transport)
 - **CLI fallback**: the agent runs shell commands like `toktoken search:symbols "query"`
 
 ### 3.1 MCP server configuration
 
-Find your agent below and follow the linked setup guide:
+TokToken runs as a local stdio MCP server. It exposes 26 tools via JSON-RPC 2.0 on stdin/stdout. Find your agent below and follow the linked setup guide:
 
-| Agent | Config format | Setup guide |
-| ----- | ------------- | ----------- |
-| **Claude Code** | CLI registration | [docs/setup/claude-code.md](setup/claude-code.md) |
-| **Claude Desktop** | `"mcpServers"` JSON | [docs/setup/claude-desktop.md](setup/claude-desktop.md) |
-| **VS Code / GitHub Copilot** | `"servers"` JSON | [docs/setup/copilot-vscode.md](setup/copilot-vscode.md) |
-| **Cursor** | `"mcpServers"` JSON | [docs/setup/cursor.md](setup/cursor.md) |
-| **Windsurf** | `"mcpServers"` JSON | [docs/setup/windsurf.md](setup/windsurf.md) |
-| **Gemini CLI** | `"mcpServers"` JSON | [docs/setup/gemini-cli.md](setup/gemini-cli.md) |
-| **Gemini Code Assist** | `"mcpServers"` JSON | [docs/setup/gemini-code-assist.md](setup/gemini-code-assist.md) |
-| **OpenAI Codex CLI** | Rules file (no MCP) | [docs/setup/codex-cli.md](setup/codex-cli.md) |
+| Agent | Config format | Config file | Setup guide |
+| ----- | ------------- | ----------- | ----------- |
+| **Claude Code** | CLI registration | `~/.claude.json` | [setup/claude-code.md](setup/claude-code.md) |
+| **Claude Desktop** | `"mcpServers"` JSON | `~/Library/Application Support/Claude/claude_desktop_config.json` | [setup/claude-desktop.md](setup/claude-desktop.md) |
+| **VS Code / GitHub Copilot** | `"servers"` JSON | `.vscode/mcp.json` | [setup/copilot-vscode.md](setup/copilot-vscode.md) |
+| **Cursor** | `"mcpServers"` JSON | `.cursor/mcp.json` or `~/.cursor/mcp.json` | [setup/cursor.md](setup/cursor.md) |
+| **Windsurf** | `"mcpServers"` JSON | `~/.codeium/windsurf/mcp_config.json` | [setup/windsurf.md](setup/windsurf.md) |
+| **Gemini CLI** | `"mcpServers"` JSON | `~/.gemini/settings.json` | [setup/gemini-cli.md](setup/gemini-cli.md) |
+| **Gemini Code Assist** | `"mcpServers"` JSON | `.gemini/settings.json` | [setup/gemini-code-assist.md](setup/gemini-code-assist.md) |
+| **OpenAI Codex CLI** | Rules file (no MCP) | `AGENTS.md` | [setup/codex-cli.md](setup/codex-cli.md) |
 
 > **Warning:** VS Code / GitHub Copilot uses `"servers"` as the top-level key, **not** `"mcpServers"`. Using the wrong format will silently fail. See [copilot-vscode.md](setup/copilot-vscode.md) for the correct configuration.
 
@@ -175,6 +175,10 @@ For most MCP clients (all except Claude Code, VS Code, and Codex CLI), the JSON 
 ### 3.2 CLI rules setup (for agents without MCP, or as complement)
 
 Copy the rules template from [docs/rules-template.md](rules-template.md) into your agent's instructions file. Each vendor setup guide above includes the specific file path and format for rules placement.
+
+### 3.3 Auto-approve tools (recommended)
+
+Most MCP clients prompt for permission on each tool call. TokToken tools are read-only queries against a local SQLite index — they are safe to auto-approve. Each setup guide above includes platform-specific auto-approve instructions. At minimum, auto-approve these high-frequency tools: `search_symbols`, `inspect_symbol`, `inspect_outline`, `inspect_bundle`, `search_text`, `stats`.
 
 ---
 
@@ -208,8 +212,8 @@ toktoken index:update
 | Tool | Description |
 | ---- | ----------- |
 | `codebase_detect` | Detect if a directory contains indexable source code |
-| `index_create` | Create a full symbol index. Pass `full: true` to disable smart filter |
-| `index_update` | Incrementally update the index. Pass `full: true` to disable smart filter |
+| `index_create` | Create a full symbol index. Markdown files are always indexed (documentation kinds: chapter, section, subsection). Pass `full: true` to also include CSS, HTML, YAML, etc. |
+| `index_update` | Incrementally update the index. Pass `full: true` to include all file types |
 | `index_github` | Clone and index a GitHub repository |
 | `search_symbols` | Search symbols by name (returns IDs for inspect_symbol) |
 | `search_text` | Grep-like text search across indexed files |
@@ -228,10 +232,11 @@ toktoken index:update
 | `search_similar` | Find symbols similar to a given one by name/summary keywords |
 | `inspect_dependencies` | Trace transitive import graph recursively |
 | `inspect_hierarchy` | Show class/function hierarchy with parent-child relationships |
-| `inspect_blast` | Symbol blast radius analysis (BFS on reverse import graph) |
+| `inspect_blast_radius` | Symbol blast radius analysis (BFS on reverse import graph) |
 | `inspect_cycles` | Detect circular import cycles (Tarjan's SCC) |
 | `find_dead` | Find unreferenced symbols (dead/unreferenced classification, confidence levels) |
 | `index_file` | Reindex a single file without rebuilding the full index |
+| `help` | Get usage details for a TokToken tool, or list all tools |
 
 ### CLI command reference
 
@@ -255,7 +260,7 @@ toktoken search:symbols "handler" --scope-importers-of src/Events/Dispatcher.php
 
 | Flag | Description |
 | ---- | ----------- |
-| `--kind <list>` | Comma-separated: class, method, function, property, variable, interface, trait, constant |
+| `--kind <list>` | Comma-separated. Code: class, method, function, property, variable, interface, trait, constant, enum, namespace, type, directive. Documentation: chapter, section, subsection |
 | `--unique` | Deduplicate by file:line:name |
 | `--sort <field>` | score (default), name, file, line, kind |
 | `--count` | Return count only |
@@ -361,6 +366,7 @@ toktoken inspect:tree --depth 2
 | `codebase:detect [path]` | Detect if directory is a codebase |
 | `projects:list` | List all indexed projects |
 | `cache:clear` | Delete the index database |
+| `help [command]` | List all tools or show detailed usage for a specific tool |
 
 ---
 
@@ -600,6 +606,24 @@ Find import cycles before they cause runtime issues or make refactoring impossib
    --> these are the files that will need to be updated.
 ```
 
+### "I need to navigate documentation structure (headings, sections)"
+
+Markdown files (`.md`, `.markdown`, `.mdx`) are indexed by default. Headings become
+symbols: chapter (H1), section (H2), subsection (H3-H6).
+
+```text
+1. toktoken search:symbols "Installation" --kind section
+   --> Find the "Installation" section across all indexed .md files.
+
+2. toktoken inspect:symbol "docs/INSTALL.md::Installation#section"
+   --> Read ONLY the Installation section content (between this heading and the next).
+```
+
+Documentation kinds are separate from code kinds:
+
+- Code: class, method, function, property, variable, interface, trait, constant, enum, namespace, type, directive
+- Documentation: chapter, section, subsection
+
 ---
 
 ## Configuration
@@ -625,7 +649,7 @@ Place in the project root to customize indexing behavior:
 }
 ```
 
-Set `"smart_filter": false` to index all file types including CSS, HTML, and vendored subdirectories.
+Set `"smart_filter": false` to index all file types including CSS, HTML, and vendored subdirectories. Note: Markdown files are always indexed regardless of the smart filter setting.
 
 Global config at `~/.toktoken.json` supports all sections (`index`, `logging`). Project config only supports `index`.
 
@@ -648,7 +672,7 @@ TokToken requires **universal-ctags**, not the older exuberant-ctags. Run `ctags
 Likely causes:
 
 1. **Wrong directory:** `toktoken codebase:detect` must return `action: "index:create"` or `action: "ready"`. If it returns exit code 1, the directory has no indexable source files.
-2. **Smart filter excluded everything:** If your project is primarily CSS/HTML/YAML, run `toktoken index:create --full` to disable the smart filter.
+2. **Smart filter excluded everything:** If your project is primarily CSS/HTML/YAML, run `toktoken index:create --full` to disable the smart filter. Note: Markdown files (`.md`) are never excluded by the smart filter.
 3. **Language not supported:** Check [docs/LANGUAGES.md](LANGUAGES.md) for the list of supported languages. If your language uses non-standard file extensions, configure `extra_extensions` in `.toktoken.json`.
 
 ### `index:create` is very slow (> 60 seconds for a small project)
@@ -666,7 +690,7 @@ Likely causes:
 ### `search:symbols` returns no results but the symbol exists
 
 1. **Index is stale:** Run `toktoken index:update` to refresh.
-2. **Symbol is in an excluded file type:** If the symbol is in a CSS/HTML/YAML file, re-index with `--full`.
+2. **Symbol is in an excluded file type:** If the symbol is in a CSS/HTML/YAML file, re-index with `--full`. Markdown symbols (headings) are always indexed — no `--full` needed.
 3. **Try text search:** `toktoken search:text "symbolName"` searches raw file content, not the symbol index. If text search finds it but symbol search doesn't, the symbol might not be recognized by ctags for that language.
 
 ### Permission denied errors

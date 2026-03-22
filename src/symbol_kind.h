@@ -1,7 +1,7 @@
 /*
  * symbol_kind.h -- Symbol kind enum and ctags kind mapping.
  *
- * 12 canonical symbol kinds. Maps ctags output kinds (29 entries)
+ * 15 canonical symbol kinds. Maps ctags output kinds (35 entries)
  * to canonical values. Unknown kinds fall back to TT_KIND_VARIABLE.
  */
 
@@ -23,16 +23,20 @@ typedef enum
     TT_KIND_VARIABLE,
     TT_KIND_NAMESPACE,
     TT_KIND_TYPE,
-    TT_KIND_DIRECTIVE
+    TT_KIND_DIRECTIVE,
+    /* Documentation kinds (Markdown, reStructuredText, etc.) */
+    TT_KIND_CHAPTER,
+    TT_KIND_SECTION,
+    TT_KIND_SUBSECTION
 } tt_symbol_kind_e;
 
 /* Total number of canonical kinds. */
-#define TT_KIND_COUNT 12
+#define TT_KIND_COUNT 15
 
 /*
  * tt_kind_from_ctags -- Convert ctags kind string to enum.
  *
- * Uses the 29-entry CTAGS_MAP. If not found, tries matching the
+ * Uses the 35-entry CTAGS_MAP. If not found, tries matching the
  * lowercased string against canonical kind names. Final fallback:
  * TT_KIND_VARIABLE.
  */
@@ -56,7 +60,8 @@ const char *tt_kind_label(tt_symbol_kind_e kind);
  * tt_kind_is_single_line -- True for kinds that span a single line.
  *
  * Single-line: constant, variable, property, namespace, type, directive.
- * Multi-line:  class, interface, trait, enum, function, method.
+ * Multi-line:  class, interface, trait, enum, function, method,
+ *              chapter, section, subsection.
  */
 bool tt_kind_is_single_line(tt_symbol_kind_e kind);
 
@@ -64,7 +69,8 @@ bool tt_kind_is_single_line(tt_symbol_kind_e kind);
  * tt_kind_is_valid -- Check if a string is a valid canonical kind name.
  *
  * Returns true for: class, interface, trait, enum, function, method,
- * constant, property, variable, namespace, type, directive.
+ * constant, property, variable, namespace, type, directive,
+ * chapter, section, subsection.
  * Case-insensitive comparison.
  */
 bool tt_kind_is_valid(const char *kind);

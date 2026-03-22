@@ -574,6 +574,74 @@ static void test_int_ff_smart_filter_prunes_vendor_subdir(void)
     free(tmpdir);
 }
 
+/* ---- Markdown smart filter tests ---- */
+
+TT_TEST(test_int_ff_markdown_discovered_without_smart_filter)
+{
+    char *tmpdir = tt_test_tmpdir();
+    tt_test_write_file(tmpdir, "docs/guide.md", "# Hello\n## World\n");
+    tt_test_write_file(tmpdir, "src/main.php", "<?php\n");
+
+    tt_file_filter_t ff;
+    tt_file_filter_init(&ff, 0, NULL, false);
+    tt_discovered_paths_t result;
+    int rc = tt_discover_paths(tmpdir, &ff, &result);
+    TT_ASSERT(rc == 0, "discover smart_filter=false");
+    TT_ASSERT(paths_contain(&result, "docs/guide.md"),
+              ".md discovered without smart filter");
+    TT_ASSERT(paths_contain(&result, "src/main.php"),
+              ".php discovered without smart filter");
+    tt_discovered_paths_free(&result);
+    tt_file_filter_free(&ff);
+    tt_test_rmdir(tmpdir);
+    free(tmpdir);
+}
+
+TT_TEST(test_int_ff_markdown_included_with_smart_filter)
+{
+    char *tmpdir = tt_test_tmpdir();
+    tt_test_write_file(tmpdir, "docs/guide.md", "# Hello\n");
+    tt_test_write_file(tmpdir, "docs/notes.markdown", "# Notes\n");
+    tt_test_write_file(tmpdir, "src/main.php", "<?php\n");
+
+    tt_file_filter_t ff;
+    tt_file_filter_init(&ff, 0, NULL, true);
+    tt_discovered_paths_t result;
+    int rc = tt_discover_paths(tmpdir, &ff, &result);
+    TT_ASSERT(rc == 0, "discover smart_filter=true");
+    TT_ASSERT(paths_contain(&result, "docs/guide.md"),
+              ".md included with smart filter");
+    TT_ASSERT(paths_contain(&result, "docs/notes.markdown"),
+              ".markdown included with smart filter");
+    TT_ASSERT(paths_contain(&result, "src/main.php"),
+              ".php included with smart filter");
+    tt_discovered_paths_free(&result);
+    tt_file_filter_free(&ff);
+    tt_test_rmdir(tmpdir);
+    free(tmpdir);
+}
+
+TT_TEST(test_int_ff_mdx_included_with_smart_filter)
+{
+    char *tmpdir = tt_test_tmpdir();
+    tt_test_write_file(tmpdir, "docs/Button.mdx", "# Button\n");
+    tt_test_write_file(tmpdir, "src/index.js", "export default {};\n");
+
+    tt_file_filter_t ff;
+    tt_file_filter_init(&ff, 0, NULL, true);
+    tt_discovered_paths_t result;
+    int rc = tt_discover_paths(tmpdir, &ff, &result);
+    TT_ASSERT(rc == 0, "discover smart_filter=true");
+    TT_ASSERT(paths_contain(&result, "docs/Button.mdx"),
+              ".mdx included with smart filter");
+    TT_ASSERT(paths_contain(&result, "src/index.js"),
+              ".js included with smart filter");
+    tt_discovered_paths_free(&result);
+    tt_file_filter_free(&ff);
+    tt_test_rmdir(tmpdir);
+    free(tmpdir);
+}
+
 void run_int_file_filter_tests(void)
 {
     TT_RUN(test_int_ff_discover_includes_source);
@@ -594,4 +662,7 @@ void run_int_file_filter_tests(void)
     TT_RUN(test_int_ff_skip_file_patterns);
     TT_RUN(test_int_ff_path_validation);
     TT_RUN(test_int_ff_smart_filter_prunes_vendor_subdir);
+    TT_RUN(test_int_ff_markdown_discovered_without_smart_filter);
+    TT_RUN(test_int_ff_markdown_included_with_smart_filter);
+    TT_RUN(test_int_ff_mdx_included_with_smart_filter);
 }

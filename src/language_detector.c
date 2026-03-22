@@ -107,6 +107,9 @@ static const ext_map_entry_t EXT_MAP[] = {
     {"yml", "yaml"},
     {"asm", "asm"},
     {"s", "asm"},
+    {"md", "markdown"},
+    {"markdown", "markdown"},
+    {"mdx", "markdown"},
 };
 
 #define EXT_MAP_SIZE (sizeof(EXT_MAP) / sizeof(EXT_MAP[0]))

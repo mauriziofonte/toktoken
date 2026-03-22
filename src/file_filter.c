@@ -49,7 +49,7 @@ static const char *SKIP_DIRS[] = {
     "coverage", ".nyc_output", "__coverage__",
     NULL};
 
-/* 64 source extensions */
+/* 67 source extensions */
 static const char *SOURCE_EXTENSIONS[] = {
     "php", "phtml", "inc",                         /* PHP */
     "js", "jsx", "mjs", "cjs",                     /* JavaScript */
@@ -102,6 +102,7 @@ static const char *SOURCE_EXTENSIONS[] = {
     "ahk",                                         /* AutoHotkey */
     "yaml", "yml",                                 /* YAML (for OpenAPI specs) */
     "asm", "s",                                    /* Assembly (GAS/NASM/etc.) */
+    "md", "markdown", "mdx",                       /* Markdown */
     NULL};
 
 /* Extensions whose ctags output is not useful for code navigation.

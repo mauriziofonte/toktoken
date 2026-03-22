@@ -34,7 +34,7 @@ Works with Claude Code, Cursor, Windsurf, Copilot, Gemini, Codex, **and any MCP-
 
 ## Features
 
-- **46 languages** via [universal-ctags](https://ctags.io/) + 14 custom parsers (see [docs/LANGUAGES.md](docs/LANGUAGES.md))
+- **47 languages** via [universal-ctags](https://ctags.io/) + 14 custom parsers (see [docs/LANGUAGES.md](docs/LANGUAGES.md))
 - **Import graph**: cross-file dependency tracking with `find:importers`, `find:references`, `find:callers`, and `inspect:dependencies`
 - **FTS5 search** with relevance scoring, cascading query strategies, and token-budget-aware result slicing
 - **Incremental indexing** using content hashing -- re-indexes only changed files, including single-file reindex
@@ -70,7 +70,7 @@ Verify installation: `ctags --version` must show **Universal Ctags**, not Exuber
 
 ## Quick Start
 
-> Verify `~/.local/bin` is in your PATH to run the `toktoken` command. To check this, run `echo $PATH` in your terminal and look for `~/.local/bin`. If it's not there, add it to your shell configuration file (e.g., `~/.bashrc`, `~/.zshrc`): `export PATH="$HOME/.local/bin:$PATH"`.
+> **PATH setup:** Ensure `~/.local/bin` is in your PATH. If not, add `export PATH="$HOME/.local/bin:$PATH"` to your `~/.bashrc` or `~/.zshrc`.
 
 ```bash
 # Install (Linux x86_64 example)
@@ -85,6 +85,7 @@ toktoken index:create
 # Search for symbols (-k filters by kind, -c enables compact output)
 # Note: by default, TokToken excludes non-code files (CSS, HTML, SVG) and
 # vendored subdirectories. Use -f / --full to include everything.
+# Markdown files are always indexed (documentation kinds: chapter, section, subsection).
 toktoken search:symbols "auth" -ck class,method,function
 
 # Full-text search grouped by file
@@ -148,7 +149,7 @@ Used with `index:create`, `index:update`, and `index:github`.
 | Short | Long | Argument | Description |
 | ----- | ---- | -------- | ----------- |
 | `-m` | `--max-files` | `<n>` | Maximum number of files to index. Files beyond this limit are silently skipped. Default: 200000. |
-| `-f` | `--full` | | Disable the smart filter. By default, TokToken excludes non-code files (CSS, HTML, SVG, YAML, XML, TOML, GraphQL) and vendored subdirectories to reduce noise. With `--full`, everything is indexed. |
+| `-f` | `--full` | | Disable the smart filter. By default, TokToken excludes non-code files (CSS, HTML, SVG, YAML, XML, TOML, GraphQL) and vendored subdirectories to reduce noise. Markdown files (`.md`, `.markdown`, `.mdx`) are always indexed regardless of the smart filter, producing documentation-specific kinds (`chapter`, `section`, `subsection`). With `--full`, everything is indexed. |
 | `-i` | `--ignore` | `<pattern>` | Add an extra ignore pattern. Files/directories matching this glob are skipped during discovery. Repeatable: `-i vendor -i dist -i .cache`. |
 | | `--languages` | `<list>` | Comma-separated list of languages to index. Only files detected as one of these languages are processed. Example: `--languages c,python,rust`. |
 | `-X` | `--diagnostic` | | Enable structured diagnostic output. Emits JSONL events to stderr with per-phase timing, worker progress, memory snapshots, and pipeline metrics. See [Diagnostic Mode](#diagnostic-mode). |
@@ -159,7 +160,7 @@ Used with `search:symbols` and `search:text`.
 
 | Short | Long | Argument | Description |
 | ----- | ---- | -------- | ----------- |
-| `-k` | `--kind` | `<types>` | Filter results by symbol kind. Comma-separated: `function`, `class`, `method`, `variable`, `constant`, `type`, `enum`. Example: `-k function,method` returns only functions and methods. |
+| `-k` | `--kind` | `<types>` | Filter results by symbol kind. Comma-separated. Code: `function`, `class`, `method`, `variable`, `constant`, `type`, `enum`, `interface`, `trait`, `property`, `namespace`, `directive`. Documentation: `chapter`, `section`, `subsection`. Example: `-k function,method` returns only functions and methods. |
 | `-L` | `--language` | `<lang>` | Filter results to a specific language. Example: `-L python` returns only Python symbols. |
 | `-n` | `--count` | | Return only the match count, not the results themselves. Useful for checking whether a term exists in the codebase without fetching data. Output: `{"q":"term","count":42}`. |
 | `-g` | `--group-by` | `file` | Group `search:text` results by file path instead of listing individual lines. Returns per-file hit counts. |

@@ -726,6 +726,7 @@ static const char *SOURCE_EXT_SET[] = {
     "nix",
     "gleam",
     "ejs",
+    "md", "markdown", "mdx",
 };
 #define SOURCE_EXT_COUNT (sizeof(SOURCE_EXT_SET) / sizeof(SOURCE_EXT_SET[0]))
 

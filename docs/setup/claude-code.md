@@ -38,9 +38,9 @@ If the user prefers not to use the `claude` CLI, or if you (the agent) need to s
 
 | Scope | How to set | Storage | Visibility |
 | ----- | ---------- | ------- | ---------- |
-| `--scope user` | `claude mcp add-json` (user runs) | `~/.claude/settings.json` | All projects |
+| `--scope user` | `claude mcp add-json` (user runs) | `~/.claude/settings.json` | All projects, current user |
 | `--scope project` | `claude mcp add-json` or write `.mcp.json` | `.mcp.json` in project root | Shared via version control |
-| `--scope local` (default) | `claude mcp add-json` (user runs) | Local only | Current project, current user |
+| `--scope local` (default) | `claude mcp add-json` (user runs) | `~/.claude/settings.local.json` (per-project path) | Current project, current user |
 
 After adding, the user must restart the Claude Code session (close and reopen the conversation) to load the new MCP tools.
 
@@ -59,14 +59,23 @@ Add these entries to the `permissions.allow` array:
 {
     "permissions": {
         "allow": [
+            "mcp__toktoken__help",
+            "mcp__toktoken__stats",
             "mcp__toktoken__codebase_detect",
+            "mcp__toktoken__projects_list",
+            "mcp__toktoken__cache_clear",
             "mcp__toktoken__index_create",
             "mcp__toktoken__index_update",
             "mcp__toktoken__index_github",
+            "mcp__toktoken__index_file",
             "mcp__toktoken__search_symbols",
             "mcp__toktoken__search_text",
             "mcp__toktoken__search_cooccurrence",
             "mcp__toktoken__search_similar",
+            "mcp__toktoken__find_importers",
+            "mcp__toktoken__find_references",
+            "mcp__toktoken__find_callers",
+            "mcp__toktoken__find_dead",
             "mcp__toktoken__inspect_outline",
             "mcp__toktoken__inspect_symbol",
             "mcp__toktoken__inspect_file",
@@ -74,16 +83,8 @@ Add these entries to the `permissions.allow` array:
             "mcp__toktoken__inspect_bundle",
             "mcp__toktoken__inspect_dependencies",
             "mcp__toktoken__inspect_hierarchy",
-            "mcp__toktoken__stats",
-            "mcp__toktoken__projects_list",
-            "mcp__toktoken__cache_clear",
-            "mcp__toktoken__find_importers",
-            "mcp__toktoken__find_references",
-            "mcp__toktoken__find_callers",
             "mcp__toktoken__inspect_blast_radius",
-            "mcp__toktoken__inspect_cycles",
-            "mcp__toktoken__find_dead",
-            "mcp__toktoken__index_file"
+            "mcp__toktoken__inspect_cycles"
         ]
     }
 }

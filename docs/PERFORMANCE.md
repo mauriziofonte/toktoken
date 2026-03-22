@@ -35,7 +35,7 @@ Eight well-known open-source projects spanning seven languages:
 
 **Total: 198,272 files on disk, 126,640 indexed, 9,244,328 symbols across 8 projects.**
 
-The smart filter (enabled by default) excluded vendored dependencies, test fixtures, documentation, and non-code files. "Total files" includes everything on disk (minus `.git/`); "Indexed files" reflects what passes discovery and language detection.
+The smart filter (enabled by default) excluded vendored dependencies, test fixtures, and non-code files (CSS, HTML, SVG, YAML, etc.). Markdown files are always indexed regardless of the smart filter. "Total files" includes everything on disk (minus `.git/`); "Indexed files" reflects what passes discovery and language detection.
 
 ---
 

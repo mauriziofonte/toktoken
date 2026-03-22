@@ -117,6 +117,7 @@ int tt_ctags_stream_start(tt_ctags_stream_t *stream,
             "--extras=-{qualified}",
             "--pseudo-tags=",
             "--sort=no",
+            "--langmap=Markdown:+.mdx",
             "-L", file_list_path,
             NULL};
 

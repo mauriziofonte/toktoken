@@ -144,6 +144,12 @@ E2E_OUTLINE_LANG(test_lang_outline_graphql,
 E2E_OUTLINE_LANG(test_lang_outline_julia,
                  "src/julia/simulation.jl", 5)
 
+/* Markdown (ctags) */
+E2E_SEARCH_LANG(test_lang_search_markdown,
+                "Installation", "section", "markdown/guide")
+E2E_OUTLINE_LANG(test_lang_outline_markdown,
+                 "src/markdown/guide.md", 3)
+
 void run_e2e_full_langs_tests(void)
 {
     /* Search tests -- ctags languages */
@@ -205,4 +211,8 @@ void run_e2e_full_langs_tests(void)
     TT_RUN(test_lang_outline_nix);
     TT_RUN(test_lang_outline_graphql);
     TT_RUN(test_lang_outline_julia);
+
+    /* Markdown */
+    TT_RUN(test_lang_search_markdown);
+    TT_RUN(test_lang_outline_markdown);
 }

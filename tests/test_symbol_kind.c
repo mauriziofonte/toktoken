@@ -101,7 +101,8 @@ TT_TEST(test_symbol_kind_to_str_stable_values)
 {
     const char *expected[] = {
         "class", "interface", "trait", "enum", "function", "method",
-        "constant", "property", "variable", "namespace", "type", "directive"
+        "constant", "property", "variable", "namespace", "type", "directive",
+        "chapter", "section", "subsection"
     };
     for (int i = 0; i < TT_KIND_COUNT; i++) {
         TT_ASSERT_EQ_STR(expected[i], tt_kind_to_str((tt_symbol_kind_e)i));
@@ -136,6 +137,57 @@ TT_TEST(test_symbol_kind_is_valid)
     TT_ASSERT_FALSE(tt_kind_is_valid(NULL));
 }
 
+/* ---- Documentation kind tests ---- */
+
+TT_TEST(test_symbol_kind_from_ctags_doc_kinds)
+{
+    /* Identity mappings */
+    TT_ASSERT_EQ_INT(TT_KIND_CHAPTER,    tt_kind_from_ctags("chapter"));
+    TT_ASSERT_EQ_INT(TT_KIND_SECTION,    tt_kind_from_ctags("section"));
+    TT_ASSERT_EQ_INT(TT_KIND_SUBSECTION, tt_kind_from_ctags("subsection"));
+
+    /* Alias collapsing: H4-H6 all map to subsection */
+    TT_ASSERT_EQ_INT(TT_KIND_SUBSECTION, tt_kind_from_ctags("subsubsection"));
+    TT_ASSERT_EQ_INT(TT_KIND_SUBSECTION, tt_kind_from_ctags("l4subsection"));
+    TT_ASSERT_EQ_INT(TT_KIND_SUBSECTION, tt_kind_from_ctags("l5subsection"));
+}
+
+TT_TEST(test_symbol_kind_doc_labels)
+{
+    TT_ASSERT_EQ_STR("Chapter",    tt_kind_label(TT_KIND_CHAPTER));
+    TT_ASSERT_EQ_STR("Section",    tt_kind_label(TT_KIND_SECTION));
+    TT_ASSERT_EQ_STR("Subsection", tt_kind_label(TT_KIND_SUBSECTION));
+}
+
+TT_TEST(test_symbol_kind_doc_kinds_are_multiline)
+{
+    TT_ASSERT_FALSE(tt_kind_is_single_line(TT_KIND_CHAPTER));
+    TT_ASSERT_FALSE(tt_kind_is_single_line(TT_KIND_SECTION));
+    TT_ASSERT_FALSE(tt_kind_is_single_line(TT_KIND_SUBSECTION));
+}
+
+TT_TEST(test_symbol_kind_doc_kinds_are_valid)
+{
+    /* Canonical names are valid */
+    TT_ASSERT_TRUE(tt_kind_is_valid("chapter"));
+    TT_ASSERT_TRUE(tt_kind_is_valid("section"));
+    TT_ASSERT_TRUE(tt_kind_is_valid("subsection"));
+
+    /* Case insensitive */
+    TT_ASSERT_TRUE(tt_kind_is_valid("Chapter"));
+    TT_ASSERT_TRUE(tt_kind_is_valid("SECTION"));
+
+    /* Aliases are NOT valid canonical kind names */
+    TT_ASSERT_FALSE(tt_kind_is_valid("subsubsection"));
+    TT_ASSERT_FALSE(tt_kind_is_valid("l4subsection"));
+    TT_ASSERT_FALSE(tt_kind_is_valid("l5subsection"));
+}
+
+TT_TEST(test_symbol_kind_count_is_15)
+{
+    TT_ASSERT_EQ_INT(15, TT_KIND_COUNT);
+}
+
 void run_symbol_kind_tests(void)
 {
     TT_RUN(test_symbol_kind_from_ctags_identity);
@@ -147,4 +199,9 @@ void run_symbol_kind_tests(void)
     TT_RUN(test_symbol_kind_is_single_line);
     TT_RUN(test_symbol_kind_to_str_stable_values);
     TT_RUN(test_symbol_kind_is_valid);
+    TT_RUN(test_symbol_kind_from_ctags_doc_kinds);
+    TT_RUN(test_symbol_kind_doc_labels);
+    TT_RUN(test_symbol_kind_doc_kinds_are_multiline);
+    TT_RUN(test_symbol_kind_doc_kinds_are_valid);
+    TT_RUN(test_symbol_kind_count_is_15);
 }

@@ -76,7 +76,7 @@ Files exceeding `max_file_size_kb` (default: 2048 KB / 2 MB) are skipped during 
 
 ### Smart Filter (Noise Reduction)
 
-By default, TokToken excludes file types that produce noisy symbol data (CSS selectors, HTML tags) and prunes vendored subdirectories detected via package manager manifests. This reduces false positives in search results and prevents third-party code from dominating the index. The smart filter does not replace security filtering -- secret pattern detection, symlink escape checks, and binary exclusion apply regardless of the smart filter setting.
+By default, TokToken excludes file types that produce noisy symbol data (CSS selectors, HTML tags) and prunes vendored subdirectories detected via package manager manifests. This reduces false positives in search results and prevents third-party code from dominating the index. Markdown files are an exception: they are always indexed because headings produce high-quality documentation symbols (chapter, section, subsection). The smart filter does not replace security filtering -- secret pattern detection, symlink escape checks, and binary exclusion apply regardless of the smart filter setting.
 
 ### No External Telemetry
 

@@ -12,6 +12,8 @@ Cache the result. Do not re-check.
 
 TokToken's smart filter (default: on) excludes CSS, HTML, SVG, TOML, GraphQL, XML, YAML
 and vendored subdirectories. If you need to search these, re-index with `--full`.
+Markdown files (.md, .markdown, .mdx) are always indexed -- headings become
+documentation kinds: chapter (H1), section (H2), subsection (H3-H6).
 
 ## Pre-Query Freshness
 
@@ -21,7 +23,7 @@ and detects all changes including uncommitted edits.
 
 ## Commands
 
-- `toktoken search:symbols "<query>"` -- find functions, classes, methods
+- `toktoken search:symbols "<query>"` -- find functions, classes, methods, headings
 - `toktoken search:text "<query>"` -- full-text search (supports pipe OR: "cache|ttl")
 - `toktoken inspect:outline "<file>"` -- file structure
 - `toktoken inspect:symbol "<id>"` -- retrieve source code for a specific symbol
@@ -44,7 +46,7 @@ and detects all changes including uncommitted edits.
 
 ## Key Flags
 
-- `--kind class,method,function` -- filter by symbol type
+- `--kind class,method,function` -- filter by symbol type (also: chapter,section,subsection for docs)
 - `--filter`, `--exclude` -- path filtering (pipe-separated OR)
 - `--count` -- count-only mode (useful for negative signals)
 - `--group-by file` -- aggregate text search hits per file
@@ -67,6 +69,8 @@ and detects all changes including uncommitted edits.
 TokToken's smart filter (default: on) excludes non-code files and vendored
 subdirectories from the index. Excluded extensions: CSS, SCSS, LESS, SASS,
 HTML, HTM, SVG, TOML, GraphQL, XML, XUL, YAML, YML.
+Markdown files (.md, .markdown, .mdx) are NOT excluded -- they are always
+indexed with documentation kinds: chapter, section, subsection.
 
 **When to re-index with `--full`:**
 

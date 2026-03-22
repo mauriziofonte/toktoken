@@ -1,6 +1,6 @@
 # TokToken Language Support
 
-TokToken supports 46 programming languages. Symbol extraction uses [universal-ctags](https://ctags.io/) for most languages and built-in custom parsers for 14 additional ones.
+TokToken supports 47 programming languages. Symbol extraction uses [universal-ctags](https://ctags.io/) for most languages and built-in custom parsers for 14 additional ones.
 
 ---
 
@@ -31,6 +31,7 @@ These languages are parsed by universal-ctags. Symbol extraction quality depends
 | JavaScript | `.js`, `.jsx`, `.mjs`, `.cjs` |
 | Kotlin | `.kt`, `.kts` |
 | Lua | `.lua` |
+| Markdown | `.md`, `.markdown`, `.mdx` |
 | Objective-C | `.m` |
 | Objective-C++ | `.mm` |
 | OCaml | `.ml`, `.mli` |
@@ -97,6 +98,8 @@ To include the ctags-based ones:
 - MCP: pass `"full": true` to `index_create` or `index_update`
 
 > **Note**: GraphQL and XML/XUL files are always processed by the custom parser regardless of the smart filter setting. The smart filter exclusion only prevents ctags from also processing them (which would produce duplicate/inferior results).
+>
+> **Note**: Markdown files (`.md`, `.markdown`, `.mdx`) are **always indexed** regardless of the smart filter setting. Headings are extracted as documentation-specific symbol kinds: `chapter` (H1), `section` (H2), `subsection` (H3-H6). Unlike CSS/HTML, Markdown headings produce high-quality navigable symbols that do not pollute code search results.
 
 ---
 
@@ -109,7 +112,6 @@ Use `extra_extensions` in `.toktoken.json` to map additional file extensions to 
   "index": {
     "extra_extensions": {
       "svx": "svelte",
-      "mdx": "markdown",
       "tsx": "typescript"
     }
   }
@@ -119,7 +121,7 @@ Use `extra_extensions` in `.toktoken.json` to map additional file extensions to 
 Or via environment variable:
 
 ```bash
-export TOKTOKEN_EXTRA_EXTENSIONS="svx:svelte,mdx:markdown"
+export TOKTOKEN_EXTRA_EXTENSIONS="svx:svelte"
 ```
 
 > **Note**: `extra_extensions` affects language detection only. The mapped extension must already be in TokToken's source extension list for the file to be discovered during indexing.

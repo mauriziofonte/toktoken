@@ -101,7 +101,7 @@ static void print_usage(void)
             "  -X, --diagnostic       Emit JSONL diagnostics to stderr\n"
             "\n"
             "Search options:\n"
-            "  -k, --kind <type>      Filter by symbol kind (function,class,...)\n"
+            "  -k, --kind <type>      Filter by symbol kind (function,class,chapter,...)\n"
             "  -L, --language <lang>  Filter by language\n"
             "  -n, --count            Show match count only\n"
             "  -g, --group-by file    Group text search results by file\n"

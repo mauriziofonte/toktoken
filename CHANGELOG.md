@@ -5,7 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] - 2026-03-22
+
+### Added
+
+#### Markdown Symbol Extraction (Issue #1)
+
+- **47 languages**: Markdown files (`.md`, `.markdown`, `.mdx`) are now indexed as a first-class language. Headings are extracted as documentation-specific symbol kinds:
+  - `chapter` — H1 headings
+  - `section` — H2 headings
+  - `subsection` — H3-H6 headings (collapsed to a single canonical kind)
+- **3 new canonical kinds** added to the kind system: `TT_KIND_CHAPTER`, `TT_KIND_SECTION`, `TT_KIND_SUBSECTION` (`TT_KIND_COUNT` 12 → 15).
+- **6 new CTAGS_MAP entries** (3 identity + 3 aliases): `subsubsection`, `l4subsection`, `l5subsection` all collapse to `subsection`.
+- **MDX support**: `.mdx` files are mapped to the Markdown ctags parser via `--langmap=Markdown:+.mdx`.
+- **Not excluded by smart filter**: unlike CSS/HTML/YAML, Markdown files are always indexed regardless of the smart filter setting. Headings produce high-quality navigable symbols that do not pollute code search results.
+
+#### Documentation Pipeline
+
+- **MCP tool schemas**: `search_symbols`, `inspect_outline`, and `find_dead` kind parameter descriptions now list all 15 canonical kinds with Code/Documentation separation.
+- **MCP tool descriptions**: `index_create`, `search_symbols`, and `inspect_outline` descriptions updated to mention headings and documentation kinds.
+- **CLI help**: `--kind` flag example updated to include `chapter`.
+- **Error messages**: `cmd_search.c` and `cmd_inspect.c` "Valid kinds" strings include `chapter`, `section`, `subsection`.
+- **docs/LANGUAGES.md**: Markdown added to ctags-based languages table (46 → 47), smart filter exclusions note clarifies Markdown is never excluded.
+- **docs/LLM.md**: new "Documentation Navigation" workflow pattern, `--kind` flag table updated, `index_create` MCP tool description updated, troubleshooting notes clarify Markdown is always indexed.
+- **docs/rules-template.md**: smart filter section clarifies Markdown is always indexed with documentation kinds.
+- **docs/ARCHITECTURE.md**, **docs/SECURITY.md**, **docs/PERFORMANCE.md**, **docs/CONFIGURATION.md**: smart filter sections updated to note Markdown exception.
+- **README.md**: language count 46 → 47, `--kind` option lists all 15 kinds, `--full` flag description notes Markdown exception.
+
+#### Test Suite
+
+- **Fixture**: `tests/fixtures/full-project/src/markdown/guide.md` — 7 headings (1 chapter, 3 sections, 2 subsections, 1 subsubsection→subsection).
+- **Unit tests** (`test_symbol_kind.c`): 5 new tests — ctags doc kind mapping, labels, multiline, validity, count. Updated `test_symbol_kind_to_str_stable_values` with 3 new expected values.
+- **Unit tests** (`test_language_detector.c`): 2 new tests — extension and path detection for `.md`/`.markdown`/`.mdx`.
+- **Integration tests** (`test_int_file_filter.c`): 3 new tests — Markdown discovered without smart filter, Markdown included with smart filter (not excluded), MDX included with smart filter.
+- **E2E tests** (`test_e2e_full_langs.c`): 2 new tests — `search:symbols` finds "Installation" as `section` kind, `inspect:outline` produces at least 3 symbols from `guide.md`.
+
+#### Documentation Audit
+
+- **docs/LLM.md**: fixed MCP tool name `inspect_blast` → `inspect_blast_radius` in the tools table. Added missing `help` tool to both MCP tools table and CLI "Other commands" table.
+- **docs/LLM.md**: enhanced Step 3 MCP setup section — added config file paths column to agent table, clarified stdio transport, added tool count ("26 tools via JSON-RPC 2.0"). Added new section 3.3 "Auto-approve tools (recommended)" with guidance for safe auto-approval of read-only TokToken tools.
+- **docs/ARCHITECTURE.md**: removed "Gemfile" from vendor manifests list (not implemented). Fixed MD040 linter warning by adding `text` language specifier to data flow diagram fenced code block. Restructured CLI Mode from wall-of-text paragraph to module→commands table for readability.
+- **docs/CONFIGURATION.md**: removed "Gemfile" from vendor manifests list. Added documentation for three undocumented features: `.toktokenignore` file support, monorepo workspace-aware pruning (npm workspaces, Cargo `[workspace] members`, Go `go.work use` directives), and source tree directory protection (`src/`, `lib/`, `packages/`, `apps/`, `internal/`, `modules/`, `crates/`). Fixed `extra_extensions` example: replaced `"mdx": "markdown"` (now built-in) with `"tsx": "typescript"`.
+- **docs/setup/windsurf.md**: replaced incomplete `alwaysAllow` array (20 tools) with complete list of all 26 tools.
+- **docs/setup/claude-code.md**: added `mcp__toktoken__help` to permissions allow list. Updated scope options table with current Claude Code 2026 terminology (`~/.claude.json` paths).
+- **README.md**: cleaned up Quick Start PATH note from multi-sentence inline text to concise callout.
+
+## [0.2.1] - 2026-03-21
+
+### Fixed
+
+- **Preserve `full_index` flag across `index:update` cycles** (PR #3, @JeffreyVdb): when a project was indexed with `--full` (smart filter disabled), a subsequent `index:update` without `--full` would re-enable the smart filter during file discovery, causing files outside the smart filter to be treated as deleted and purged from the database. The `full` flag is now persisted as `full_index` in index metadata and automatically restored on `index:update`.
 
 ### Security
 
@@ -145,6 +194,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Diagnostic mode (`-X`) with structured JSONL output.
 - Cross-platform support: Linux (x86_64, aarch64, armv7), macOS (x86_64, aarch64), Windows (x86_64).
 
-[Unreleased]: https://github.com/mauriziofonte/toktoken/compare/v0.2.0...HEAD
+[0.3.0]: https://github.com/mauriziofonte/toktoken/compare/v0.2.1...v0.3.0
+[0.2.1]: https://github.com/mauriziofonte/toktoken/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/mauriziofonte/toktoken/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/mauriziofonte/toktoken/releases/tag/v0.1.0

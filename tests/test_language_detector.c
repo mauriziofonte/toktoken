@@ -124,6 +124,20 @@ TT_TEST(test_lang_from_extension_unknown)
     TT_ASSERT_NULL(tt_language_from_extension(NULL));
 }
 
+TT_TEST(test_lang_detect_markdown)
+{
+    TT_ASSERT_EQ_STR("markdown", tt_language_from_extension("md"));
+    TT_ASSERT_EQ_STR("markdown", tt_language_from_extension("markdown"));
+    TT_ASSERT_EQ_STR("markdown", tt_language_from_extension("mdx"));
+}
+
+TT_TEST(test_lang_detect_markdown_path)
+{
+    TT_ASSERT_EQ_STR("markdown", tt_detect_language("docs/README.md"));
+    TT_ASSERT_EQ_STR("markdown", tt_detect_language("guide.markdown"));
+    TT_ASSERT_EQ_STR("markdown", tt_detect_language("components/Button.mdx"));
+}
+
 void run_language_detector_tests(void)
 {
     TT_RUN(test_lang_detect_common_extensions);
@@ -139,4 +153,6 @@ void run_language_detector_tests(void)
     TT_RUN(test_lang_detect_new_extensions);
     TT_RUN(test_lang_extra_extensions_override);
     TT_RUN(test_lang_from_extension_unknown);
+    TT_RUN(test_lang_detect_markdown);
+    TT_RUN(test_lang_detect_markdown_path);
 }

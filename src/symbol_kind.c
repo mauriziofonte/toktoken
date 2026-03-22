@@ -21,7 +21,10 @@ static const char *KIND_STRINGS[TT_KIND_COUNT] = {
     "variable",
     "namespace",
     "type",
-    "directive"};
+    "directive",
+    "chapter",
+    "section",
+    "subsection"};
 
 /* Human-readable labels (indexed by tt_symbol_kind_e). */
 static const char *KIND_LABELS[TT_KIND_COUNT] = {
@@ -36,9 +39,12 @@ static const char *KIND_LABELS[TT_KIND_COUNT] = {
     "Variable",
     "Namespace",
     "Type definition",
-    "Directive"};
+    "Directive",
+    "Chapter",
+    "Section",
+    "Subsection"};
 
-/* CTAGS_MAP: 29 entries (12 identity + 17 aliases). */
+/* CTAGS_MAP: 35 entries (15 identity + 20 aliases). */
 typedef struct
 {
     const char *ctags_kind;
@@ -78,6 +84,13 @@ static const ctags_map_entry_t CTAGS_MAP[] = {
     {"typedef", TT_KIND_TYPE},
     {"enumerator", TT_KIND_CONSTANT},
     {"union", TT_KIND_TYPE},
+    /* Documentation kinds (3 identity + 3 aliases) */
+    {"chapter", TT_KIND_CHAPTER},
+    {"section", TT_KIND_SECTION},
+    {"subsection", TT_KIND_SUBSECTION},
+    {"subsubsection", TT_KIND_SUBSECTION},
+    {"l4subsection", TT_KIND_SUBSECTION},
+    {"l5subsection", TT_KIND_SUBSECTION},
 };
 
 #define CTAGS_MAP_SIZE (sizeof(CTAGS_MAP) / sizeof(CTAGS_MAP[0]))

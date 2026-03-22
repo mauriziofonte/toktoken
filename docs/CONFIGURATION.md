@@ -89,9 +89,13 @@ When non-empty, only files matching these languages are indexed. Language names 
 When true (default), TokToken applies automatic exclusions:
 
 - **Non-code extensions excluded**: css, scss, less, sass, html, htm, svg, toml, graphql, gql, xml, xul, yaml, yml
-- **Vendored subdirectories pruned**: any non-root directory containing a package manager manifest (composer.json, package.json, setup.py, pyproject.toml, Cargo.toml, go.mod, pom.xml, build.gradle, Gemfile) is skipped
+- **Vendored subdirectories pruned**: any non-root directory containing a package manager manifest (composer.json, package.json, setup.py, pyproject.toml, Cargo.toml, go.mod, pom.xml, build.gradle) is skipped
 
-These exclusions are additive to .gitignore and extra_ignore_patterns.
+**Note:** Markdown files (`.md`, `.markdown`, `.mdx`) are always indexed regardless of the smart filter setting. Their headings are extracted as documentation-specific symbol kinds: `chapter` (H1), `section` (H2), `subsection` (H3-H6).
+
+**Workspace-aware pruning**: In monorepo setups, TokToken detects workspace members (npm `workspaces`, Cargo `[workspace] members`, Go `go.work use` directives) and exempts them from vendor manifest pruning. Additionally, directories under conventional source paths (`src/`, `lib/`, `packages/`, `apps/`, `internal/`, `modules/`, `crates/`) are never treated as vendored, even if they contain their own package manifests.
+
+These exclusions are additive to .gitignore, `.toktokenignore`, and extra_ignore_patterns.
 
 To index everything:
 
@@ -105,6 +109,20 @@ To index everything:
 
 Or use the `--full` CLI flag: `toktoken index:create --full`
 
+### .toktokenignore
+
+TokToken supports a `.toktokenignore` file in the project root. This file uses the same gitignore-style syntax as `.gitignore` and is loaded alongside it during file discovery. Use it for TokToken-specific exclusions that should not affect your `.gitignore`.
+
+```text
+# .toktokenignore example
+*.generated.go
+dist/
+__snapshots__/
+*.test.js
+```
+
+This is equivalent to using `extra_ignore_patterns` in `.toktoken.json`, but may be more convenient for projects that prefer file-based configuration.
+
 ### extra_extensions
 
 Map custom file extensions to existing language parsers. The key is the extension (without dot), the value is the target language name.
@@ -115,7 +133,7 @@ Map custom file extensions to existing language parsers. The key is the extensio
     "extra_extensions": {
       "blade": "php",
       "svx": "svelte",
-      "mdx": "markdown"
+      "tsx": "typescript"
     }
   }
 }
@@ -193,7 +211,7 @@ export TOKTOKEN_EXTRA_EXTENSIONS="blade:php,svx:svelte"
 }
 ```
 
-### Full index (include CSS, HTML, vendored code)
+### Full index (include CSS, HTML, vendored code — Markdown is always included)
 
 ```json
 {

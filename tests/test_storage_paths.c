@@ -122,7 +122,8 @@ TT_TEST(test_sp_migration_old_to_new)
     tt_mkdir_p(old_cache);
     tt_test_write_file(tmpdir, ".cache/.toktoken/marker.txt", "migrated");
 
-    const char *orig_home = getenv("HOME");
+    /* strdup: getenv returns pointer into env internals that setenv may realloc */
+    char *orig_home = getenv("HOME") ? tt_strdup(getenv("HOME")) : NULL;
     setenv("HOME", tmpdir, 1);
 
     char *base = tt_storage_base_dir();
@@ -138,6 +139,7 @@ TT_TEST(test_sp_migration_old_to_new)
         setenv("HOME", orig_home, 1);
     else
         unsetenv("HOME");
+    free(orig_home);
     free(base);
     free(marker);
     tt_test_rmdir(tmpdir);
@@ -151,7 +153,7 @@ TT_TEST(test_sp_migration_already_new)
     snprintf(new_cache, sizeof(new_cache), "%s/.cache/toktoken", tmpdir);
     tt_mkdir_p(new_cache);
 
-    const char *orig_home = getenv("HOME");
+    char *orig_home = getenv("HOME") ? tt_strdup(getenv("HOME")) : NULL;
     setenv("HOME", tmpdir, 1);
 
     char *base = tt_storage_base_dir();
@@ -165,6 +167,7 @@ TT_TEST(test_sp_migration_already_new)
         setenv("HOME", orig_home, 1);
     else
         unsetenv("HOME");
+    free(orig_home);
     free(base);
     tt_test_rmdir(tmpdir);
     free(tmpdir);
@@ -178,7 +181,7 @@ TT_TEST(test_sp_migration_fresh_install)
     snprintf(dot_cache, sizeof(dot_cache), "%s/.cache", tmpdir);
     tt_mkdir_p(dot_cache);
 
-    const char *orig_home = getenv("HOME");
+    char *orig_home = getenv("HOME") ? tt_strdup(getenv("HOME")) : NULL;
     setenv("HOME", tmpdir, 1);
 
     char *base = tt_storage_base_dir();
@@ -191,6 +194,7 @@ TT_TEST(test_sp_migration_fresh_install)
         setenv("HOME", orig_home, 1);
     else
         unsetenv("HOME");
+    free(orig_home);
     free(base);
     tt_test_rmdir(tmpdir);
     free(tmpdir);
@@ -205,7 +209,7 @@ TT_TEST(test_sp_migration_both_exist)
     tt_mkdir_p(old_cache);
     tt_mkdir_p(new_cache);
 
-    const char *orig_home = getenv("HOME");
+    char *orig_home = getenv("HOME") ? tt_strdup(getenv("HOME")) : NULL;
     setenv("HOME", tmpdir, 1);
 
     char *base = tt_storage_base_dir();
@@ -218,6 +222,7 @@ TT_TEST(test_sp_migration_both_exist)
         setenv("HOME", orig_home, 1);
     else
         unsetenv("HOME");
+    free(orig_home);
     free(base);
     tt_test_rmdir(tmpdir);
     free(tmpdir);

@@ -7,6 +7,7 @@
 #include "mcp_log.h"
 #include "platform.h"
 #include "storage_paths.h"
+#include "str_util.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -76,7 +77,7 @@ static void free_lines(char **lines, int count)
 TT_TEST(test_mcp_log_tool_call_creates_file)
 {
     char *tmpdir = tt_test_tmpdir();
-    const char *orig_home = getenv("HOME");
+    char *orig_home = getenv("HOME") ? tt_strdup(getenv("HOME")) : NULL;
     setenv("HOME", tmpdir, 1);
 
     cJSON *args = cJSON_CreateObject();
@@ -91,6 +92,7 @@ TT_TEST(test_mcp_log_tool_call_creates_file)
         setenv("HOME", orig_home, 1);
     else
         unsetenv("HOME");
+    free(orig_home);
     free(path);
     tt_test_rmdir(tmpdir);
     free(tmpdir);
@@ -99,7 +101,7 @@ TT_TEST(test_mcp_log_tool_call_creates_file)
 TT_TEST(test_mcp_log_tool_call_format)
 {
     char *tmpdir = tt_test_tmpdir();
-    const char *orig_home = getenv("HOME");
+    char *orig_home = getenv("HOME") ? tt_strdup(getenv("HOME")) : NULL;
     setenv("HOME", tmpdir, 1);
 
     cJSON *args = cJSON_CreateObject();
@@ -154,6 +156,7 @@ TT_TEST(test_mcp_log_tool_call_format)
         setenv("HOME", orig_home, 1);
     else
         unsetenv("HOME");
+    free(orig_home);
     free(path);
     tt_test_rmdir(tmpdir);
     free(tmpdir);
@@ -162,7 +165,7 @@ TT_TEST(test_mcp_log_tool_call_format)
 TT_TEST(test_mcp_log_tool_call_failure)
 {
     char *tmpdir = tt_test_tmpdir();
-    const char *orig_home = getenv("HOME");
+    char *orig_home = getenv("HOME") ? tt_strdup(getenv("HOME")) : NULL;
     setenv("HOME", tmpdir, 1);
 
     tt_mcp_log_tool_call("index_create", NULL, "/tmp/proj",
@@ -191,6 +194,7 @@ TT_TEST(test_mcp_log_tool_call_failure)
         setenv("HOME", orig_home, 1);
     else
         unsetenv("HOME");
+    free(orig_home);
     free(path);
     tt_test_rmdir(tmpdir);
     free(tmpdir);
@@ -199,7 +203,7 @@ TT_TEST(test_mcp_log_tool_call_failure)
 TT_TEST(test_mcp_log_lifecycle_initialize)
 {
     char *tmpdir = tt_test_tmpdir();
-    const char *orig_home = getenv("HOME");
+    char *orig_home = getenv("HOME") ? tt_strdup(getenv("HOME")) : NULL;
     setenv("HOME", tmpdir, 1);
 
     tt_mcp_log_lifecycle(TT_MCP_LOG_INITIALIZE, "/tmp/project",
@@ -230,6 +234,7 @@ TT_TEST(test_mcp_log_lifecycle_initialize)
         setenv("HOME", orig_home, 1);
     else
         unsetenv("HOME");
+    free(orig_home);
     free(path);
     tt_test_rmdir(tmpdir);
     free(tmpdir);
@@ -238,7 +243,7 @@ TT_TEST(test_mcp_log_lifecycle_initialize)
 TT_TEST(test_mcp_log_lifecycle_shutdown)
 {
     char *tmpdir = tt_test_tmpdir();
-    const char *orig_home = getenv("HOME");
+    char *orig_home = getenv("HOME") ? tt_strdup(getenv("HOME")) : NULL;
     setenv("HOME", tmpdir, 1);
 
     tt_mcp_log_lifecycle(TT_MCP_LOG_SHUTDOWN, "/tmp/project", NULL);
@@ -264,6 +269,7 @@ TT_TEST(test_mcp_log_lifecycle_shutdown)
         setenv("HOME", orig_home, 1);
     else
         unsetenv("HOME");
+    free(orig_home);
     free(path);
     tt_test_rmdir(tmpdir);
     free(tmpdir);
@@ -272,7 +278,7 @@ TT_TEST(test_mcp_log_lifecycle_shutdown)
 TT_TEST(test_mcp_log_append_multiple)
 {
     char *tmpdir = tt_test_tmpdir();
-    const char *orig_home = getenv("HOME");
+    char *orig_home = getenv("HOME") ? tt_strdup(getenv("HOME")) : NULL;
     setenv("HOME", tmpdir, 1);
 
     tt_mcp_log_lifecycle(TT_MCP_LOG_INITIALIZE, "/tmp/p", "test 1.0");
@@ -300,6 +306,7 @@ TT_TEST(test_mcp_log_append_multiple)
         setenv("HOME", orig_home, 1);
     else
         unsetenv("HOME");
+    free(orig_home);
     free(path);
     tt_test_rmdir(tmpdir);
     free(tmpdir);

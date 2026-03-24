@@ -10,102 +10,102 @@ Run `toktoken codebase:detect` at session start.
 
 Cache the result. Do not re-check.
 
-TokToken's smart filter (default: on) excludes CSS, HTML, SVG, TOML, GraphQL, XML, YAML
-and vendored subdirectories. If you need to search these, re-index with `--full`.
-Markdown files (.md, .markdown, .mdx) are always indexed -- headings become
-documentation kinds: chapter (H1), section (H2), subsection (H3-H6).
-
 ## Pre-Query Freshness
 
 Before any TokToken query, if you have edited source files since the last
-index:update, run `toktoken index:update` first. This uses file-hash comparison
-and detects all changes including uncommitted edits.
+index:update, run `toktoken index:update` first.
 
-## Commands
+## Query Workflow
 
-- `toktoken search:symbols "<query>"` -- find functions, classes, methods, headings
-- `toktoken search:text "<query>"` -- full-text search (supports pipe OR: "cache|ttl")
-- `toktoken inspect:outline "<file>"` -- file structure
-- `toktoken inspect:symbol "<id>"` -- retrieve source code for a specific symbol
-- `toktoken inspect:bundle "<id>[,<id2>,...]"` -- symbol context bundle (definition + imports + outline); accepts comma-separated IDs, max 20
-- `toktoken inspect:blast "<id>"` -- symbol blast radius analysis (impact of changing a symbol)
-- `toktoken inspect:cycles` -- detect circular import cycles
-- `toktoken inspect:file "<file>" --lines START-END` -- file content slice
-- `toktoken inspect:tree` -- file tree
-- `toktoken find:importers "<file>"` -- find files that import a given file
-- `toktoken find:references "<id>"` -- find import references to an identifier
-- `toktoken find:callers "<id>"` -- find symbols that likely call a function
-- `toktoken find:dead` -- find unreferenced symbols
-- `toktoken search:cooccurrence "<a>,<b>"` -- find symbols co-occurring in same file
-- `toktoken search:similar "<id>"` -- find similar symbols by name/summary (import-aware)
-- `toktoken suggest` -- onboarding discovery: keywords, distributions, most-imported, examples
-- `toktoken inspect:dependencies "<file>"` -- trace transitive import graph
-- `toktoken inspect:hierarchy "<file>"` -- show class/function parent-child hierarchy
-- `toktoken stats` -- index statistics
-- `toktoken index:update` -- refresh after edits
-- `toktoken index:file "<file>"` -- reindex a single file
+**Default pattern (2 calls for most questions):**
 
-## Key Flags
+1. `search:symbols "<query>" --detail compact --limit 10 --exclude test`
+2. `inspect:symbol "<id1>,<id2>,<id3>" --compact` with the top 2-4 IDs
 
-- `--kind class,method,function` -- filter by symbol type (also: chapter,section,subsection for docs)
-- `--filter`, `--exclude` -- path filtering (pipe-separated OR)
-- `--count` -- count-only mode (useful for negative signals)
-- `--group-by file` -- aggregate text search hits per file
-- `--compact` -- smaller JSON output (~47% reduction)
-- `--limit N` -- cap results
-- `--no-sig --no-summary` -- minimal output for discovery queries
-- `--context N` / `-C N` -- context lines around matches
-- `--debug` -- show per-field score breakdown in search results
-- `--detail compact|standard|full` -- result detail level for search:symbols
-- `--token-budget N` -- max token budget for search results (truncates gracefully)
-- `--scope-imports-of <file>` -- scope search to files imported by the given file
-- `--scope-importers-of <file>` -- scope search to files that import the given file
-- `--has-importers` -- add has_importers flag to find:importers results
-- `--include-callers` -- include callers in inspect:bundle output
-- `--exclude-tests` -- exclude test files from results (find:dead)
-- `--format markdown` -- markdown output for inspect:bundle
+This answers "how does X work", "where is X defined", "show me X" questions.
 
-## Smart Filter Awareness
+**When to use inspect:bundle instead of inspect:symbol:**
 
-TokToken's smart filter (default: on) excludes non-code files and vendored
-subdirectories from the index. Excluded extensions: CSS, SCSS, LESS, SASS,
-HTML, HTM, SVG, TOML, GraphQL, XML, XUL, YAML, YML.
-Markdown files (.md, .markdown, .mdx) are NOT excluded -- they are always
-indexed with documentation kinds: chapter, section, subsection.
+Only when you need import context or file structure -- e.g., "what does this
+file depend on", "what's the architecture of module X". Bundle includes full
+file outlines and imports, which costs ~4x more tokens than inspect:symbol.
 
-**When to re-index with `--full`:**
+**When to use other tools:**
 
-- The user asks about CSS selectors, HTML structure, XML schemas, YAML config,
-  OpenAPI specs, GraphQL schemas, TOML config, or SVG content
-- A search returns 0 results but the user expects matches in excluded file types
-- The user explicitly asks to index "everything" or "all files"
-- The project is primarily composed of excluded file types (e.g., a design system
-  with mostly CSS/HTML, an infrastructure repo with YAML/HCL, an API project
-  with OpenAPI specs)
+- `inspect:outline` -- "what's in this file", "show me the structure of X.py"
+- `inspect:blast` -- "what breaks if I change X" (Python/JS/TS/PHP only)
+- `inspect:cycles` -- "are there circular imports"
+- `inspect:hierarchy` -- "show class hierarchy in this file"
+- `find:dead --exclude-tests` -- "find unused code"
+- `search:text` -- grep for string literals, comments, config values
+- `suggest` -- first contact with unfamiliar codebase
 
-**How to re-index:**
+**Anti-patterns (do NOT do these):**
 
-- MCP: call `index_create` with `full: true` (or `index_update` with `full: true`)
-- CLI: `toktoken index:create --full` (or `toktoken index:update --full`)
+- Multiple search:symbols with synonym queries ("cookie", "cookie store jar",
+  "cookie send header request"). Search once with a broad query.
+- Multiple inspect:symbol calls when one call with comma-separated IDs works.
+- Using inspect:bundle when you only need source code.
+- Using search:symbols when you already know the file -- use inspect:outline.
 
-**Proactive communication:** When you detect that the user's query targets
-excluded file types, inform them BEFORE they ask:
+## Import Graph Limitations
 
-> "TokToken's smart filter excludes [CSS/HTML/XML/...] files by default to
-> reduce noise. I'll re-index with `--full` to include them."
+Import graph tools (`inspect:blast`, `find:importers`, `find:callers`,
+`inspect:dependencies`) rely on explicit import statements.
 
-Do not silently re-index. Explain what was excluded and why you are including it.
+**Works well:** Python, JavaScript, TypeScript, PHP, Ruby, Java, C#, Go, Rust.
+
+**Does NOT work:** C, C++ (`#include` not tracked as imports). On C/C++
+codebases, use `search:text` and `search:symbols` instead of import graph
+tools.
+
+`find:callers` is heuristic-based and may miss method calls via `self`/`this`.
+Prefer `search:text "<function_name>" --filter src/` for reliable call-site
+search.
+
+## Key Flags (always use for efficiency)
+
+- `--detail compact` on search:symbols -- returns only id/name/kind/file/line
+- `--compact` on inspect:symbol/bundle -- shorter JSON keys
+- `--exclude test|deps|vendor` -- filter noise on initial exploration
+- `--limit N` -- always cap search results (10-15 for discovery, 5 for targeted)
+- `--token-budget N` -- hard cap on response token size
+- `--kind function,method,class` -- filter by symbol type
+
+Other flags: `--filter` (include path), `--group-by file` (text search),
+`--count` (count-only), `--context N` (lines around matches),
+`--no-sig --no-summary` (minimal search output), `--sort name|file|line`,
+`--scope-imports-of <file>`, `--scope-importers-of <file>`,
+`--format markdown` (bundle output), `--include-callers` (bundle).
+
+## Commands Reference
+
+**Search:** `search:symbols`, `search:text`, `search:cooccurrence`,
+`search:similar`.
+
+**Inspect:** `inspect:symbol`, `inspect:bundle`, `inspect:outline`,
+`inspect:blast`, `inspect:cycles`, `inspect:hierarchy`, `inspect:file`,
+`inspect:tree`, `inspect:dependencies`.
+
+**Find:** `find:importers`, `find:references`, `find:callers`, `find:dead`.
+
+**Index:** `index:update`, `index:file`, `index:create`.
+
+**Other:** `suggest`, `stats`.
+
+Symbol IDs: `{file}::{qualified_name}#{kind}`.
+
+## Smart Filter
+
+TokToken excludes CSS, HTML, SVG, TOML, GraphQL, XML, YAML and vendored
+subdirectories by default. Markdown is always indexed.
+
+Re-index with `--full` when targeting excluded file types. Inform the user
+before re-indexing.
 
 ## Rules
 
-- Search first, then inspect:symbol for targeted retrieval
 - Do not read entire files when a symbol retrieval suffices
 - Do not pipe output through jq/python/awk -- use native flags
-- Symbol IDs follow the format: `{file}::{qualified_name}#{kind}`
-
-## Update Awareness
-
-When TokToken responses include `update_available` in the `_ttk` metadata,
-inform the user once per session: "TokToken update available (current: X.Y.Z,
-latest: X.Y.Z). Run `toktoken --self-update` to upgrade."
-Do not repeat after first notification. Do not run the update automatically.
+- When TokToken responses include `update_available` in `_ttk`, inform the
+  user once: "TokToken update available. Run `toktoken --self-update`."

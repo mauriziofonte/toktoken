@@ -5,6 +5,85 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-03-24
+
+### Changed
+
+- **Cache directory**: renamed from `~/.cache/.toktoken/` to `~/.cache/toktoken/` (XDG-compliant, no leading dot under `.cache`). Seamless atomic migration on first access via POSIX `rename()`. If another MCP server is actively using the old directory, the tool falls back gracefully and retries on next invocation.
+
+### Added
+
+- **MCP JSONL logging**: all MCP tool calls and lifecycle events (initialize, tools/list, shutdown) are logged to `~/.cache/toktoken/logs/mcp.jsonl`. Each entry includes timestamp, tool name, arguments, project path, duration, and success/error status with error reason. Enables per-project LLM usage analysis and failure diagnostics.
+- **Formal correctness assessment**: 456 probes across 7 codebases (redis, curl, flask, fzf, ripgrep, framework, typeorm), 100% pass rate. See `docs/ASSESSMENT.md`.
+
+### Fixed
+
+- **find:importers deduplication**: `tt_store_count_importers()` now uses `COUNT(DISTINCT source_file)` and the row query uses `GROUP BY source_file`, matching `most_imported_files` counts exactly.
+- **Self-import filter**: `tt_store_resolve_imports()` now skips resolutions where `resolved_file == source_file`, eliminating false positive self-cycles (e.g., ae.h including itself via same-directory resolution).
+- **search:similar score field**: CLI JSON output now includes `score` for each result, matching MCP tool output.
+- **help hyphen normalization**: `normalize_to_mcp()` now converts both `:` and `-` to `_`, so `help inspect:blast-radius` correctly resolves to `inspect_blast_radius`.
+
+## [0.3.5] (Unreleased) - 2026-03-23
+
+### Added
+
+#### New Command: `suggest` — Onboarding Discovery Tool
+
+- **`suggest`** (CLI + MCP tool `suggest`): aggregates existing index data to produce actionable starting points for exploring an unfamiliar codebase. Returns `top_keywords`, `kind_distribution`, `language_distribution`, `most_imported_files`, and `example_queries`. All queries hit existing tables — no new schema required.
+- MCP tool count: 26 → 27.
+
+#### New Language: Razor / ASP.NET Views (.cshtml)
+
+- **Razor** (`.cshtml`): custom `parser_razor.c` extracts C# methods from `@functions`/`@code` blocks, HTML element IDs as constants, and `@model`/`@using`/`@inject` directives.
+
+#### New Language: Twig Templates (.twig)
+
+- **Twig** (`.twig`): custom `parser_twig.c` with 3-pass architecture (dead zone marking, tag extraction, HTML attribute extraction). Supports Twig 2.x and 3.x (identical syntax).
+- Extracted constructs: blocks (`directive`), macros (`method` with signature), set variables (`variable`), template references — extends/include/embed/import/from/use (`directive`), HTML element IDs (`constant`), Stimulus.js `data-controller` attributes (`constant` with `stimulus.` qualified name).
+- Dead zone handling: `{# comment #}`, `{% verbatim %}...{% endverbatim %}`, `{% raw %}...{% endraw %}` blocks are skipped during extraction.
+- Template list syntax: `{% extends ['a.twig', 'b.twig'] %}` extracts all paths. `_self` and dynamic (variable/function) paths are skipped.
+- Whitespace modifiers: `{%-`, `{%~` variants handled correctly.
+- **Import extraction**: 6 Twig import types (`extends`, `include`, `embed`, `import`, `from`, `use`) added to `import_extractor.c`, enabling `find:importers` and `inspect:dependencies` for Twig template graphs.
+- Language count: 47 → 49. Custom parser count: 14 → 16.
+
+#### Blade Parser Upgrade — 3-Pass Architecture
+
+- **Blade** (`.blade.php`): rewritten from single-pass (13 directives) to 3-pass architecture (Pass 0: dead zone marking, Pass 1: `@directive` extraction, Pass 2: `<x-component>` extraction).
+- Dead zone handling: `{{-- comment --}}` and `@verbatim...@endverbatim` blocks are skipped during extraction.
+- 19 recognized directives: `extends`, `section`, `yield`, `component`, `livewire`, `include`, `includeIf`, `includeWhen`, `includeFirst`, `slot`, `push`, `stack`, `prepend`, `each`, `inject`, `use`, `pushOnce`, `pushIf`, `prependOnce`.
+- Directive normalization: `includeIf`/`includeWhen`/`includeFirst` → `include`; `prepend`/`pushOnce`/`prependOnce`/`pushIf` → `push`.
+- Special argument handling: `@includeWhen`/`@pushIf` skip first argument (condition) to extract the string argument; `@includeFirst` supports list syntax `['a', 'b']` extracting all paths.
+- `<x-component>` extraction: `<x-name>` → `component.name`, `<x-slot:name>` → `slot.name`, `<x-dynamic-component>` skipped.
+- `@use` qualified name: preserves backslashes (`use.App\Models\User`).
+- **Blade-specific import extraction**: new `extract_blade()` function in `import_extractor.c` handles `@extends`, `@include` variants, `@component`, `@livewire`, `@each`, `@use`, and `<x-component>` patterns. Blade files no longer fall through to the PHP extractor.
+- **30 Blade tests**: 25 integration tests (10 existing + 15 new covering dead zones, include variants, list syntax, `@inject`/`@each`/`@use`/`@livewire`, `<x-component>`/`<x-slot>`/`<x-dynamic-component>`, dedup, empty file), 5 import extraction tests, 2 E2E tests (search + outline).
+
+#### Search Enhancements
+
+- **`search:similar` import-awareness**: results sharing importers with the source symbol receive a 1.5× bonus per shared importer, improving relevance for structurally related symbols.
+- **Query length limit** (500 characters): `search:symbols`, `search:text`, and `search:cooccurrence` now reject queries longer than 500 characters with an `invalid_value` error. Defense against resource exhaustion via pathological FTS5 queries.
+
+#### Stats Enhancement
+
+- **`most_imported_files`** in `stats` output: top 10 files by import count, sourced from the `imports` table. Exposes file centrality data that was previously only used for search ranking.
+
+#### `find:references --check` — Boolean Reference Check
+
+- **`--check`** flag on `find:references`: returns `{ identifier, is_referenced, import_count, content_count }` instead of the full reference list. Useful for quick "is this used?" checks before refactoring or deletion.
+
+#### Test Suite
+
+- **Razor parser tests**: 4 unit tests (functions block, directives, HTML IDs, empty file), 2 E2E lang tests (search + outline).
+- **Twig parser tests**: 24 integration tests covering directives, blocks, macros, set variables, imports, HTML IDs, data-controller, comment/verbatim/raw dead zones, list paths, dynamic path skipping, keywords, content hash, empty files, null inputs.
+- **Twig import tests**: 5 unit tests (basic imports, list paths, `_self` skipping, dynamic skipping, whitespace modifiers).
+- **Twig E2E tests**: 2 tests (search for `formatDate` method, outline with ≥5 symbols).
+- **`suggest` tests**: integration test (all 5 fields, keyword ordering, example queries), E2E test (CLI output validation).
+- **`most_imported_files` tests**: integration test (field presence, ordering), E2E test (full-project validation).
+- **`find:references --check` tests**: 2 integration tests (referenced + unreferenced), 2 E2E tests (CLI boolean check).
+- **Query length limit tests**: 3 integration tests (at-limit, over-limit, empty), 2 E2E tests (search:symbols + search:text).
+- **`search:similar` import-awareness**: covered by existing integration and E2E tests.
+- MCP tool count assertions updated (26 → 27) in both `test_int_mcp_server.c` test paths.
+
 ## [0.3.0] - 2026-03-22
 
 ### Added
@@ -194,6 +273,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Diagnostic mode (`-X`) with structured JSONL output.
 - Cross-platform support: Linux (x86_64, aarch64, armv7), macOS (x86_64, aarch64), Windows (x86_64).
 
+[0.3.5]: https://github.com/mauriziofonte/toktoken/compare/v0.3.0...v0.3.5
 [0.3.0]: https://github.com/mauriziofonte/toktoken/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/mauriziofonte/toktoken/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/mauriziofonte/toktoken/compare/v0.1.0...v0.2.0

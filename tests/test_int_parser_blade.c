@@ -249,6 +249,214 @@ TT_TEST(test_int_blade_normalize_directive)
     tt_symbol_array_free(syms, count);
 }
 
+/* ---- New fixture-based tests (blade-project/) ---- */
+
+#define BLADE_ROOT() \
+    const char *fixture = tt_test_fixtures_dir(); \
+    if (!fixture) return; \
+    char root[512]; \
+    snprintf(root, sizeof(root), "%s/blade-project", fixture)
+
+#define BLADE_PARSE(relpath) \
+    const char *files[] = {relpath}; \
+    tt_symbol_t *syms = NULL; \
+    int count = 0; \
+    int rc = tt_parse_blade(root, files, 1, &syms, &count); \
+    TT_ASSERT_EQ_INT(0, rc)
+
+TT_TEST(test_blade_comment_dead_zone)
+{
+    BLADE_ROOT();
+    BLADE_PARSE("resources/views/pages/dashboard.blade.php");
+
+    for (int i = 0; i < count; i++) {
+        TT_ASSERT_FALSE(sym_has_name(syms, count, "should-not-appear"));
+    }
+
+    tt_symbol_array_free(syms, count);
+}
+
+TT_TEST(test_blade_verbatim_dead_zone)
+{
+    BLADE_ROOT();
+    BLADE_PARSE("resources/views/edge/verbatim.blade.php");
+
+    /* Only section + x-component should be extracted */
+    TT_ASSERT_NOT_NULL(sym_find_qname(syms, count, "section.real-content"));
+    TT_ASSERT_NOT_NULL(sym_find_qname(syms, count, "component.real-component"));
+    TT_ASSERT_EQ_INT(count, 2);
+
+    /* Dead zone content must NOT appear */
+    TT_ASSERT(sym_find_qname(syms, count, "extends.should-not-extract") == NULL,
+              "verbatim content must not extract extends");
+
+    tt_symbol_array_free(syms, count);
+}
+
+TT_TEST(test_blade_include_variants)
+{
+    BLADE_ROOT();
+    BLADE_PARSE("resources/views/pages/dashboard.blade.php");
+
+    /* All include variants should be normalized to include.* */
+    TT_ASSERT_NOT_NULL(sym_find_qname(syms, count, "include.partials.header"));
+    TT_ASSERT_NOT_NULL(sym_find_qname(syms, count, "include.partials.optional-banner"));
+    TT_ASSERT_NOT_NULL(sym_find_qname(syms, count, "include.partials.sidebar"));
+
+    /* No un-normalized names */
+    for (int i = 0; i < count; i++) {
+        TT_ASSERT_FALSE(tt_str_starts_with(syms[i].qualified_name, "includeIf."));
+        TT_ASSERT_FALSE(tt_str_starts_with(syms[i].qualified_name, "includeWhen."));
+        TT_ASSERT_FALSE(tt_str_starts_with(syms[i].qualified_name, "includeFirst."));
+        TT_ASSERT_FALSE(tt_str_starts_with(syms[i].qualified_name, "pushOnce."));
+        TT_ASSERT_FALSE(tt_str_starts_with(syms[i].qualified_name, "prependOnce."));
+    }
+
+    tt_symbol_array_free(syms, count);
+}
+
+TT_TEST(test_blade_includeFirst_list)
+{
+    BLADE_ROOT();
+    BLADE_PARSE("resources/views/pages/dashboard.blade.php");
+
+    /* Both paths from @includeFirst(['partials.custom-footer', 'partials.footer']) */
+    TT_ASSERT_NOT_NULL(sym_find_qname(syms, count, "include.partials.custom-footer"));
+    TT_ASSERT_NOT_NULL(sym_find_qname(syms, count, "include.partials.footer"));
+
+    tt_symbol_array_free(syms, count);
+}
+
+TT_TEST(test_blade_inject_directive)
+{
+    BLADE_ROOT();
+    BLADE_PARSE("resources/views/pages/dashboard.blade.php");
+
+    TT_ASSERT_NOT_NULL(sym_find_qname(syms, count, "inject.metrics"));
+
+    tt_symbol_array_free(syms, count);
+}
+
+TT_TEST(test_blade_each_directive)
+{
+    BLADE_ROOT();
+    BLADE_PARSE("resources/views/pages/dashboard.blade.php");
+
+    TT_ASSERT_NOT_NULL(sym_find_qname(syms, count, "each.partials.item"));
+
+    tt_symbol_array_free(syms, count);
+}
+
+TT_TEST(test_blade_use_directive)
+{
+    BLADE_ROOT();
+    BLADE_PARSE("resources/views/pages/dashboard.blade.php");
+
+    TT_ASSERT_NOT_NULL(sym_find_qname(syms, count, "use.App\\Models\\User"));
+
+    tt_symbol_array_free(syms, count);
+}
+
+TT_TEST(test_blade_livewire)
+{
+    BLADE_ROOT();
+    BLADE_PARSE("resources/views/pages/dashboard.blade.php");
+
+    TT_ASSERT_NOT_NULL(sym_find_qname(syms, count, "livewire.notifications"));
+
+    tt_symbol_array_free(syms, count);
+}
+
+TT_TEST(test_blade_prepend_normalized)
+{
+    BLADE_ROOT();
+    BLADE_PARSE("resources/views/pages/dashboard.blade.php");
+
+    /* @prepend('styles') should be normalized to push.styles */
+    TT_ASSERT_NOT_NULL(sym_find_qname(syms, count, "push.styles"));
+    for (int i = 0; i < count; i++) {
+        TT_ASSERT_FALSE(tt_str_starts_with(syms[i].qualified_name, "prepend."));
+    }
+
+    tt_symbol_array_free(syms, count);
+}
+
+TT_TEST(test_blade_x_component_extraction)
+{
+    BLADE_ROOT();
+    BLADE_PARSE("resources/views/pages/dashboard.blade.php");
+
+    TT_ASSERT_NOT_NULL(sym_find_qname(syms, count, "component.alert"));
+    TT_ASSERT_NOT_NULL(sym_find_qname(syms, count, "component.inputs.text-field"));
+    TT_ASSERT_NOT_NULL(sym_find_qname(syms, count, "component.navigation.breadcrumb"));
+
+    tt_symbol_array_free(syms, count);
+}
+
+TT_TEST(test_blade_x_component_kind)
+{
+    BLADE_ROOT();
+    BLADE_PARSE("resources/views/edge/components.blade.php");
+
+    const tt_symbol_t *s = sym_find_qname(syms, count, "component.alert");
+    TT_ASSERT_NOT_NULL(s);
+    if (s) {
+        TT_ASSERT_EQ_STR("directive", tt_kind_to_str(s->kind));
+        TT_ASSERT_EQ_STR("blade", s->language);
+    }
+
+    tt_symbol_array_free(syms, count);
+}
+
+TT_TEST(test_blade_x_slot_extraction)
+{
+    BLADE_ROOT();
+    BLADE_PARSE("resources/views/edge/components.blade.php");
+
+    TT_ASSERT_NOT_NULL(sym_find_qname(syms, count, "slot.header"));
+    TT_ASSERT_NOT_NULL(sym_find_qname(syms, count, "slot.footer"));
+
+    tt_symbol_array_free(syms, count);
+}
+
+TT_TEST(test_blade_x_dynamic_skip)
+{
+    BLADE_ROOT();
+    BLADE_PARSE("resources/views/edge/components.blade.php");
+
+    /* <x-dynamic-component> must NOT be extracted */
+    for (int i = 0; i < count; i++) {
+        TT_ASSERT_FALSE(strstr(syms[i].qualified_name, "dynamic-component") != NULL);
+    }
+
+    tt_symbol_array_free(syms, count);
+}
+
+TT_TEST(test_blade_dedup_suffix)
+{
+    BLADE_ROOT();
+    BLADE_PARSE("resources/views/edge/dedup.blade.php");
+
+    TT_ASSERT_EQ_INT(count, 5);
+    TT_ASSERT_NOT_NULL(sym_find_qname(syms, count, "include.partials.header"));
+    TT_ASSERT_NOT_NULL(sym_find_qname(syms, count, "include.partials.header~2"));
+    TT_ASSERT_NOT_NULL(sym_find_qname(syms, count, "include.partials.footer"));
+    TT_ASSERT_NOT_NULL(sym_find_qname(syms, count, "include.partials.footer~2"));
+    TT_ASSERT_NOT_NULL(sym_find_qname(syms, count, "include.partials.footer~3"));
+
+    tt_symbol_array_free(syms, count);
+}
+
+TT_TEST(test_blade_empty_file)
+{
+    BLADE_ROOT();
+    BLADE_PARSE("resources/views/empty.blade.php");
+
+    TT_ASSERT_EQ_INT(count, 0);
+
+    tt_symbol_array_free(syms, count);
+}
+
 void run_int_parser_blade_tests(void)
 {
     TT_RUN(test_int_blade_extracts_directives);
@@ -261,4 +469,20 @@ void run_int_parser_blade_tests(void)
     TT_RUN(test_int_blade_keywords);
     TT_RUN(test_int_blade_signature);
     TT_RUN(test_int_blade_normalize_directive);
+    /* New tests */
+    TT_RUN(test_blade_comment_dead_zone);
+    TT_RUN(test_blade_verbatim_dead_zone);
+    TT_RUN(test_blade_include_variants);
+    TT_RUN(test_blade_includeFirst_list);
+    TT_RUN(test_blade_inject_directive);
+    TT_RUN(test_blade_each_directive);
+    TT_RUN(test_blade_use_directive);
+    TT_RUN(test_blade_livewire);
+    TT_RUN(test_blade_prepend_normalized);
+    TT_RUN(test_blade_x_component_extraction);
+    TT_RUN(test_blade_x_component_kind);
+    TT_RUN(test_blade_x_slot_extraction);
+    TT_RUN(test_blade_x_dynamic_skip);
+    TT_RUN(test_blade_dedup_suffix);
+    TT_RUN(test_blade_empty_file);
 }

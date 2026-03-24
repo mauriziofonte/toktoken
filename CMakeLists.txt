@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(toktoken VERSION 0.3.0 LANGUAGES C)
+project(toktoken VERSION 0.4.0 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -158,6 +158,7 @@ if(BUILD_TESTS)
         tests/test_import_extractor.c
         tests/test_update_check.c
         tests/test_cli.c
+        tests/test_mcp_log.c
         tests/test_helpers.c
         tests/test_unit_main.c
     )
@@ -172,6 +173,8 @@ if(BUILD_TESTS)
         tests/test_int_storage.c
         tests/test_int_file_filter.c
         tests/test_int_parser_blade.c
+        tests/test_int_parser_razor.c
+        tests/test_int_parser_twig.c
         tests/test_int_parser_extra.c
         tests/test_int_parsers.c
         tests/test_int_index_store.c

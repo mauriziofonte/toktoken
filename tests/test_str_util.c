@@ -168,6 +168,40 @@ TT_TEST(test_utf8_truncate)
     TT_ASSERT_EQ_STR(s, "caf");
 }
 
+/* ---- memfind ---- */
+
+TT_TEST(test_memfind)
+{
+    /* Basic match */
+    const char *hay = "hello {{ world }}";
+    TT_ASSERT_NOT_NULL(tt_memfind(hay, strlen(hay), "{{", 2));
+    TT_ASSERT_EQ_INT((int)((const char *)tt_memfind(hay, strlen(hay), "{{", 2) - hay), 6);
+
+    /* No match */
+    TT_ASSERT_NULL(tt_memfind("hello world", 11, "{{", 2));
+
+    /* Match at start */
+    TT_ASSERT_EQ_INT((int)((const char *)tt_memfind("{{foo}}", 7, "{{", 2) - "{{foo}}"), 0);
+
+    /* Match at end */
+    TT_ASSERT_EQ_INT((int)((const char *)tt_memfind("foo{{", 5, "{{", 2) - "foo{{"), 3);
+
+    /* Needle larger than haystack */
+    TT_ASSERT_NULL(tt_memfind("ab", 2, "abc", 3));
+
+    /* Empty needle returns haystack */
+    TT_ASSERT_NOT_NULL(tt_memfind("abc", 3, "", 0));
+
+    /* Single byte needle */
+    TT_ASSERT_NOT_NULL(tt_memfind("abc", 3, "b", 1));
+    TT_ASSERT_NULL(tt_memfind("abc", 3, "x", 1));
+
+    /* Haystack with embedded NULs (binary safe) */
+    const char bin[] = "ab\0cd{{ef";
+    TT_ASSERT_NOT_NULL(tt_memfind(bin, sizeof(bin) - 1, "{{", 2));
+    TT_ASSERT_EQ_INT((int)((const char *)tt_memfind(bin, sizeof(bin) - 1, "{{", 2) - bin), 5);
+}
+
 void run_str_util_tests(void)
 {
     TT_RUN(test_strbuf_append_and_format);
@@ -179,4 +213,5 @@ void run_str_util_tests(void)
     TT_RUN(test_str_trim);
     TT_RUN(test_utf8_strlen);
     TT_RUN(test_utf8_truncate);
+    TT_RUN(test_memfind);
 }

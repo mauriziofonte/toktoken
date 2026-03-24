@@ -76,6 +76,7 @@ Add these entries to the `permissions.allow` array:
             "mcp__toktoken__find_references",
             "mcp__toktoken__find_callers",
             "mcp__toktoken__find_dead",
+            "mcp__toktoken__suggest",
             "mcp__toktoken__inspect_outline",
             "mcp__toktoken__inspect_symbol",
             "mcp__toktoken__inspect_file",

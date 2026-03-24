@@ -1,0 +1,17 @@
+@model HomeViewModel
+@using MyApp.Services
+
+<div id="page-header">
+    <h1>@Model.Title</h1>
+</div>
+
+@functions {
+    public void HandleSubmit(string data)
+    {
+        Process(data);
+    }
+}
+
+<div id="content-area">
+    <p>Hello</p>
+</div>

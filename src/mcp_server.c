@@ -6,6 +6,7 @@
 
 #include "mcp_server.h"
 #include "mcp_tools.h"
+#include "mcp_log.h"
 #include "version.h"
 #include "error.h"
 #include "platform.h"
@@ -209,6 +210,24 @@ static cJSON *mcp_handle_initialize(tt_mcp_server_t *srv,
 
     srv->initialized = true;
 
+    /* Log initialize event */
+    {
+        const char *cname = NULL;
+        const char *cver = NULL;
+        const cJSON *ci = cJSON_GetObjectItemCaseSensitive(params, "clientInfo");
+        if (ci)
+        {
+            cname = cJSON_GetStringValue(
+                cJSON_GetObjectItemCaseSensitive(ci, "name"));
+            cver = cJSON_GetStringValue(
+                cJSON_GetObjectItemCaseSensitive(ci, "version"));
+        }
+        char detail[256];
+        snprintf(detail, sizeof(detail), "%s %s",
+                 cname ? cname : "unknown", cver ? cver : "");
+        tt_mcp_log_lifecycle(TT_MCP_LOG_INITIALIZE, srv->project_root, detail);
+    }
+
     /* Build result */
     cJSON *result = cJSON_CreateObject();
     cJSON_AddStringToObject(result, "protocolVersion", TT_MCP_PROTOCOL_VERSION);
@@ -233,7 +252,6 @@ static cJSON *mcp_handle_tools_list(tt_mcp_server_t *srv,
                                     const cJSON *id,
                                     const cJSON *params)
 {
-    (void)srv;
     (void)params;
 
     cJSON *result = cJSON_CreateObject();
@@ -250,6 +268,9 @@ static cJSON *mcp_handle_tools_list(tt_mcp_server_t *srv,
     }
 
     cJSON_AddItemToObject(result, "tools", tools);
+
+    tt_mcp_log_lifecycle(TT_MCP_LOG_TOOLS_LIST, srv->project_root, NULL);
+
     return mcp_make_result(id, result);
 }
 
@@ -768,6 +789,15 @@ static cJSON *mcp_handle_tools_call(tt_mcp_server_t *srv,
         is_error = true;
     }
 
+    /* Log tool call */
+    {
+        const char *error_reason = NULL;
+        if (is_error && err_field)
+            error_reason = cJSON_GetStringValue(err_field);
+        tt_mcp_log_tool_call(name, arguments, srv->project_root,
+                             elapsed_ms, !is_error, error_reason);
+    }
+
     /* Build MCP content envelope */
     cJSON *result = cJSON_CreateObject();
 
@@ -1008,6 +1038,8 @@ int tt_mcp_server_run(tt_mcp_server_t *srv)
                 break;
         }
     }
+
+    tt_mcp_log_lifecycle(TT_MCP_LOG_SHUTDOWN, srv->project_root, NULL);
 
     free(line);
     return 0;

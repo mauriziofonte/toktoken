@@ -240,6 +240,51 @@ TT_TEST(test_full_search_similar)
     }
 }
 
+/* ---------- query length limit ---------- */
+
+TT_TEST(test_full_search_symbols_query_too_long)
+{
+    full_ensure_index();
+    if (!g_full_indexed) return;
+
+    /* Build a 501-char query string */
+    char long_q[502];
+    memset(long_q, 'a', 501);
+    long_q[501] = '\0';
+
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd), "search:symbols \"%s\" --path %s",
+             long_q, g_full_fixture);
+    cJSON *json = NULL;
+    int rc = tt_e2e_run(cmd, &json);
+    TT_ASSERT(rc != 0, "should return non-zero exit for too-long query");
+    if (json) {
+        TT_ASSERT_NOT_NULL(cJSON_GetObjectItem(json, "error"));
+        cJSON_Delete(json);
+    }
+}
+
+TT_TEST(test_full_search_text_query_too_long)
+{
+    full_ensure_index();
+    if (!g_full_indexed) return;
+
+    char long_q[502];
+    memset(long_q, 'b', 501);
+    long_q[501] = '\0';
+
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd), "search:text \"%s\" --path %s",
+             long_q, g_full_fixture);
+    cJSON *json = NULL;
+    int rc = tt_e2e_run(cmd, &json);
+    TT_ASSERT(rc != 0, "should return non-zero exit for too-long query");
+    if (json) {
+        TT_ASSERT_NOT_NULL(cJSON_GetObjectItem(json, "error"));
+        cJSON_Delete(json);
+    }
+}
+
 void run_e2e_full_search_tests(void)
 {
     TT_RUN(test_full_search_symbols_cross_lang);
@@ -250,4 +295,6 @@ void run_e2e_full_search_tests(void)
     TT_RUN(test_full_search_text_filter);
     TT_RUN(test_full_search_cooccurrence);
     TT_RUN(test_full_search_similar);
+    TT_RUN(test_full_search_symbols_query_too_long);
+    TT_RUN(test_full_search_text_query_too_long);
 }

@@ -39,6 +39,90 @@ TT_TEST(test_full_stats)
     }
 }
 
+/* ---------- stats: most_imported_files ---------- */
+
+TT_TEST(test_full_stats_most_imported)
+{
+    full_ensure_index();
+    if (!g_full_indexed) return;
+
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd), "stats --path %s", g_full_fixture);
+    cJSON *json = NULL;
+    int rc = tt_e2e_run(cmd, &json);
+
+    TT_ASSERT_EQ_INT(0, rc);
+    TT_ASSERT_NOT_NULL(json);
+    if (json) {
+        cJSON *mif = cJSON_GetObjectItemCaseSensitive(json, "most_imported_files");
+        TT_ASSERT(cJSON_IsArray(mif), "stats should have most_imported_files array");
+
+        if (cJSON_IsArray(mif)) {
+            /* Full-project fixture has many import relationships */
+            TT_ASSERT_GE_INT(cJSON_GetArraySize(mif), 1);
+
+            /* Verify descending order */
+            if (cJSON_GetArraySize(mif) >= 2) {
+                cJSON *first = cJSON_GetArrayItem(mif, 0);
+                cJSON *second = cJSON_GetArrayItem(mif, 1);
+                cJSON *ic1 = cJSON_GetObjectItemCaseSensitive(first, "import_count");
+                cJSON *ic2 = cJSON_GetObjectItemCaseSensitive(second, "import_count");
+                if (cJSON_IsNumber(ic1) && cJSON_IsNumber(ic2))
+                    TT_ASSERT_GE_INT(ic1->valueint, ic2->valueint);
+            }
+
+            /* Verify structure: file + import_count */
+            cJSON *first = cJSON_GetArrayItem(mif, 0);
+            if (first) {
+                TT_ASSERT_NOT_NULL(
+                    cJSON_GetObjectItemCaseSensitive(first, "file"));
+                cJSON *ic = cJSON_GetObjectItemCaseSensitive(first, "import_count");
+                TT_ASSERT(cJSON_IsNumber(ic), "import_count should be a number");
+                if (cJSON_IsNumber(ic))
+                    TT_ASSERT_GE_INT(ic->valueint, 1);
+            }
+        }
+        cJSON_Delete(json);
+    }
+}
+
+/* ---------- suggest ---------- */
+
+TT_TEST(test_full_suggest)
+{
+    full_ensure_index();
+    if (!g_full_indexed) return;
+
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd), "suggest --path %s", g_full_fixture);
+    cJSON *json = NULL;
+    int rc = tt_e2e_run(cmd, &json);
+
+    TT_ASSERT_EQ_INT(0, rc);
+    TT_ASSERT_NOT_NULL(json);
+    if (json) {
+        /* All 5 required fields */
+        cJSON *kw = cJSON_GetObjectItemCaseSensitive(json, "top_keywords");
+        TT_ASSERT(cJSON_IsArray(kw), "should have top_keywords");
+        if (cJSON_IsArray(kw))
+            TT_ASSERT_GE_INT(cJSON_GetArraySize(kw), 5);
+
+        TT_ASSERT_NOT_NULL(
+            cJSON_GetObjectItemCaseSensitive(json, "kind_distribution"));
+        TT_ASSERT_NOT_NULL(
+            cJSON_GetObjectItemCaseSensitive(json, "language_distribution"));
+        TT_ASSERT_NOT_NULL(
+            cJSON_GetObjectItemCaseSensitive(json, "most_imported_files"));
+
+        cJSON *eq = cJSON_GetObjectItemCaseSensitive(json, "example_queries");
+        TT_ASSERT(cJSON_IsArray(eq), "should have example_queries");
+        if (cJSON_IsArray(eq))
+            TT_ASSERT_GE_INT(cJSON_GetArraySize(eq), 1);
+
+        cJSON_Delete(json);
+    }
+}
+
 /* ---------- codebase:detect (with index) ---------- */
 
 TT_TEST(test_full_codebase_detect)
@@ -132,6 +216,8 @@ TT_TEST(test_full_cache_clear)
 void run_e2e_full_manage_tests(void)
 {
     TT_RUN(test_full_stats);
+    TT_RUN(test_full_stats_most_imported);
+    TT_RUN(test_full_suggest);
     TT_RUN(test_full_codebase_detect);
     TT_RUN(test_full_codebase_detect_no_index);
     /* cache:clear MUST be last -- destroys the index */

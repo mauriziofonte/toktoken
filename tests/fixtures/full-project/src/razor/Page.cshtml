@@ -1,0 +1,37 @@
+@model PageViewModel
+@using MyApp.Models
+@using MyApp.Helpers
+@inject IUserService UserService
+
+<div id="main-container">
+    <h1>@Model.Title</h1>
+    <div id="sidebar">
+        @foreach (var item in Model.Items)
+        {
+            <p>@item.Name</p>
+        }
+    </div>
+</div>
+
+@functions {
+    public void HandleClick(string target)
+    {
+        Console.WriteLine($"Clicked: {target}");
+    }
+
+    public string FormatDate(DateTime date)
+    {
+        return date.ToString("yyyy-MM-dd");
+    }
+
+    private int CalculateTotal(int[] values)
+    {
+        return values.Sum();
+    }
+}
+
+<script>
+    document.getElementById("main-container").addEventListener("click", function() {
+        console.log("clicked");
+    });
+</script>

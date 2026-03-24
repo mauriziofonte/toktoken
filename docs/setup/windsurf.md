@@ -56,6 +56,7 @@ By default, Windsurf prompts for approval each time an MCP tool is called. Ask t
                 "find_references",
                 "find_callers",
                 "find_dead",
+                "suggest",
                 "stats",
                 "projects_list",
                 "cache_clear",

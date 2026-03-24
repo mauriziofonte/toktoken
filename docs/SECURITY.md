@@ -78,6 +78,10 @@ Files exceeding `max_file_size_kb` (default: 2048 KB / 2 MB) are skipped during 
 
 By default, TokToken excludes file types that produce noisy symbol data (CSS selectors, HTML tags) and prunes vendored subdirectories detected via package manager manifests. This reduces false positives in search results and prevents third-party code from dominating the index. Markdown files are an exception: they are always indexed because headings produce high-quality documentation symbols (chapter, section, subsection). The smart filter does not replace security filtering -- secret pattern detection, symlink escape checks, and binary exclusion apply regardless of the smart filter setting.
 
+### Query Length Limits
+
+Search commands (`search:symbols`, `search:text`, `search:cooccurrence`) reject queries exceeding 500 characters with an `invalid_value` error. This prevents resource exhaustion via pathological FTS5 queries that could cause excessive memory allocation or CPU usage in SQLite's full-text search engine.
+
 ### No External Telemetry
 
 TokToken makes no outbound network connections from its own process. All network I/O is delegated to external subprocesses via `execvp()`:

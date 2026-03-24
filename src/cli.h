@@ -87,6 +87,9 @@ typedef struct
     const char *scope_imports_of;
     const char *scope_importers_of;
 
+    /* --check (find:references — boolean reference check) */
+    bool check;
+
     /* --debug (search:symbols score breakdown) */
     bool debug;
 

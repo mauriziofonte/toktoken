@@ -1,0 +1,15 @@
+{% extends 'layouts/base.html.twig' %}
+
+{% block title %}Page Title{% endblock %}
+
+{% block content %}
+    {% include 'components/nav.html.twig' %}
+
+    <div id="page-content" data-controller="page--content">
+        {% set greeting = 'Hello' %}
+
+        {% macro formatDate(date) %}
+            {{ date|date('Y-m-d') }}
+        {% endmacro %}
+    </div>
+{% endblock %}

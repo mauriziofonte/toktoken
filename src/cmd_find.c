@@ -162,6 +162,37 @@ cJSON *tt_cmd_find_references_exec(tt_cli_opts_t *opts)
     int count = 0;
     tt_store_find_references(&store, query, &imps, &count);
 
+    /* --check: compact boolean reference check */
+    if (opts->check) {
+        int import_count = count;
+
+        /* Content references: count FTS5 hits for the identifier in symbol text */
+        int content_count = 0;
+        const char *cnt_sql =
+            "SELECT COUNT(*) FROM symbols_fts WHERE symbols_fts MATCH ?";
+        sqlite3_stmt *cnt_stmt = NULL;
+        if (sqlite3_prepare_v2(store.db->db, cnt_sql, -1, &cnt_stmt, NULL)
+            == SQLITE_OK) {
+            sqlite3_bind_text(cnt_stmt, 1, query, -1, SQLITE_TRANSIENT);
+            if (sqlite3_step(cnt_stmt) == SQLITE_ROW)
+                content_count = sqlite3_column_int(cnt_stmt, 0);
+            sqlite3_finalize(cnt_stmt);
+        }
+
+        cJSON *result = cJSON_CreateObject();
+        cJSON_AddStringToObject(result, "identifier", query);
+        cJSON_AddBoolToObject(result, "is_referenced",
+                              import_count > 0 || content_count > 0);
+        cJSON_AddNumberToObject(result, "import_count", import_count);
+        cJSON_AddNumberToObject(result, "content_count", content_count);
+
+        tt_import_array_free(imps, count);
+        tt_store_close(&store);
+        tt_database_close(&db);
+        free(project_path);
+        return result;
+    }
+
     cJSON *result = cJSON_CreateObject();
     cJSON_AddStringToObject(result, "identifier", query);
     cJSON_AddNumberToObject(result, "count", count);

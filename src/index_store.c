@@ -2170,6 +2170,10 @@ int tt_store_resolve_imports(tt_index_store_t *store)
             }
         }
 
+        /* Skip self-imports: a file cannot import itself */
+        if (resolved && source && strcmp(resolved, source) == 0)
+            resolved = NULL;
+
         /* Update resolved_file if we found a match */
         if (resolved && resolved[0])
         {
@@ -2233,7 +2237,8 @@ int tt_store_get_importers(tt_index_store_t *store, const char *file_path,
     sqlite3_stmt *stmt = NULL;
     if (prepare(store->db->db,
                 "SELECT source_file, target_name, kind, import_type "
-                "FROM imports WHERE resolved_file = ?",
+                "FROM imports WHERE resolved_file = ? "
+                "GROUP BY source_file",
                 &stmt) < 0)
         return -1;
 
@@ -2250,7 +2255,7 @@ int tt_store_count_importers(tt_index_store_t *store, const char *file_path)
 
     sqlite3_stmt *stmt = NULL;
     if (prepare(store->db->db,
-                "SELECT COUNT(*) FROM imports WHERE resolved_file = ?",
+                "SELECT COUNT(DISTINCT source_file) FROM imports WHERE resolved_file = ?",
                 &stmt) < 0)
         return 0;
 
@@ -2462,7 +2467,7 @@ int tt_store_search_cooccurrence(tt_index_store_t *store,
     tt_strbuf_append_str(&sql,
                          "SELECT s1.file, s1.name, s1.kind, s1.line, s2.name, s2.kind, s2.line "
                          "FROM symbols s1 "
-                         "JOIN symbols s2 ON s1.file = s2.file AND s1.rowid < s2.rowid "
+                         "JOIN symbols s2 ON s1.file = s2.file AND s1.rowid != s2.rowid "
                          "WHERE s1.name LIKE ? AND s2.name LIKE ?");
     if (language && language[0])
         tt_strbuf_append_str(&sql, " AND s1.language = ?");

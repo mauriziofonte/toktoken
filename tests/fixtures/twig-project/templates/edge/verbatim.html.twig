@@ -1,0 +1,15 @@
+{% verbatim %}
+    {% block should_not_extract %}
+        Raw text
+    {% endblock %}
+{% endverbatim %}
+
+{% raw %}
+    {% include 'also-not-extracted.html.twig' %}
+{% endraw %}
+
+{% block real_block %}
+    <div id="real-id">
+        Content
+    </div>
+{% endblock %}

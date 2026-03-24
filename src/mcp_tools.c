@@ -1,7 +1,7 @@
 /*
  * mcp_tools.c -- MCP tool definitions, schemas, and execution bridge.
  *
- * All 21 TokToken tools: schema generation + argument→CLI bridge.
+ * All 27 TokToken tools: schema generation + argument→CLI bridge.
  * Each execute function converts cJSON arguments into tt_cli_opts_t
  * and calls the corresponding tt_cmd_*_exec() function.
  */
@@ -16,6 +16,7 @@
 #include "cmd_github.h"
 #include "cmd_find.h"
 #include "cmd_bundle.h"
+#include "cmd_suggest.h"
 #include "cmd_help.h"
 #include "error.h"
 
@@ -849,6 +850,7 @@ static cJSON *schema_find_references(void)
     cJSON *props = cJSON_CreateObject();
     add_string_prop(props, "identifier", "Symbol or module name to find references for");
     add_string_prop(props, "path", "Project root path (default: cwd)");
+    add_boolean_prop(props, "check", "Return compact boolean result: {is_referenced, import_count, content_count}");
     cJSON_AddItemToObject(s, "properties", props);
 
     cJSON *req = cJSON_CreateArray();
@@ -894,6 +896,8 @@ static cJSON *execute_find_references(struct tt_mcp_server_t *srv,
     tt_cli_opts_t opts;
     init_opts_from_args(&opts, srv, arguments);
     opts.search = identifier;
+    if (arguments)
+        opts.check = mcp_get_bool(arguments, "check");
 
     cJSON *result = tt_cmd_find_references_exec(&opts);
     if (!result)
@@ -1298,6 +1302,29 @@ static cJSON *execute_inspect_blast_radius(struct tt_mcp_server_t *srv,
 
 /* ---- help ---- */
 
+/* ---- suggest ---- */
+
+static cJSON *schema_suggest(void)
+{
+    cJSON *s = cJSON_CreateObject();
+    cJSON_AddStringToObject(s, "type", "object");
+    cJSON *props = cJSON_AddObjectToObject(s, "properties");
+    add_string_prop(props, "path", "Project root path (default: cwd)");
+    return s;
+}
+
+static cJSON *execute_suggest(struct tt_mcp_server_t *srv,
+                               const cJSON *arguments)
+{
+    tt_cli_opts_t opts;
+    init_opts_from_args(&opts, srv, arguments);
+
+    cJSON *result = tt_cmd_suggest_exec(&opts);
+    if (!result)
+        return mcp_tool_error(tt_error_get());
+    return result;
+}
+
 static cJSON *schema_help(void)
 {
     cJSON *s = cJSON_CreateObject();
@@ -1424,6 +1451,10 @@ const tt_mcp_tool_t TT_MCP_TOOLS[] = {
      "Reindex a single file without rebuilding the entire index. Compares content hash and skips if unchanged. Fast: <100ms for typical files.",
      schema_index_file,
      execute_index_file},
+    {"suggest",
+     "Get suggested queries for exploring an unfamiliar codebase. Returns top keywords, kind/language distribution, most-imported files, and ready-to-run example queries. Call this first when starting work on a new repo.",
+     schema_suggest,
+     execute_suggest},
     {"help",
      "Get usage details for a TokToken tool, or list all tools. Returns parameters, types, defaults, and descriptions.",
      schema_help,

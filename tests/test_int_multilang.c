@@ -1083,6 +1083,57 @@ TT_TEST(test_ml_find_references)
     cJSON_Delete(result);
 }
 
+TT_TEST(test_ml_find_references_check_referenced)
+{
+    tt_cli_opts_t opts;
+    init_opts(&opts);
+    const char *pos[] = {"authenticate"};
+    opts.positional = pos;
+    opts.positional_count = 1;
+    opts.check = true;
+
+    cJSON *result = tt_cmd_find_references_exec(&opts);
+    TT_ASSERT_NOT_NULL(result);
+    if (result) {
+        TT_ASSERT_EQ_STR(cJSON_GetStringValue(cJSON_GetObjectItem(result, "identifier")),
+                          "authenticate");
+        cJSON *is_ref = cJSON_GetObjectItem(result, "is_referenced");
+        TT_ASSERT(cJSON_IsTrue(is_ref), "authenticate should be referenced");
+        cJSON *ic = cJSON_GetObjectItem(result, "import_count");
+        TT_ASSERT(cJSON_IsNumber(ic), "should have import_count");
+        if (cJSON_IsNumber(ic))
+            TT_ASSERT_GE_INT(ic->valueint, 1);
+        cJSON *cc = cJSON_GetObjectItem(result, "content_count");
+        TT_ASSERT(cJSON_IsNumber(cc), "should have content_count");
+        /* No "references" array in --check mode */
+        TT_ASSERT(cJSON_GetObjectItem(result, "references") == NULL,
+                  "check mode should not have references array");
+        cJSON_Delete(result);
+    }
+}
+
+TT_TEST(test_ml_find_references_check_unreferenced)
+{
+    tt_cli_opts_t opts;
+    init_opts(&opts);
+    const char *pos[] = {"nonexistent_symbol_xyz_999"};
+    opts.positional = pos;
+    opts.positional_count = 1;
+    opts.check = true;
+
+    cJSON *result = tt_cmd_find_references_exec(&opts);
+    TT_ASSERT_NOT_NULL(result);
+    if (result) {
+        cJSON *is_ref = cJSON_GetObjectItem(result, "is_referenced");
+        TT_ASSERT(cJSON_IsFalse(is_ref), "nonexistent symbol should not be referenced");
+        cJSON *ic = cJSON_GetObjectItem(result, "import_count");
+        TT_ASSERT_EQ_INT(0, ic->valueint);
+        cJSON *cc = cJSON_GetObjectItem(result, "content_count");
+        TT_ASSERT_EQ_INT(0, cc->valueint);
+        cJSON_Delete(result);
+    }
+}
+
 /* ====================================================================
  * Tool 17: find:callers
  * ==================================================================== */
@@ -1560,6 +1611,8 @@ void run_int_multilang_tests(void)
 
     /* Tool 16: find:references */
     TT_RUN(test_ml_find_references);
+    TT_RUN(test_ml_find_references_check_referenced);
+    TT_RUN(test_ml_find_references_check_unreferenced);
 
     /* Tool 17: find:callers */
     TT_RUN(test_ml_find_callers);

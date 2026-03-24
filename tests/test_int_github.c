@@ -381,7 +381,7 @@ TT_TEST(test_repo_dir_format)
 {
     char *dir = tt_gh_repo_dir("testowner", "testrepo");
     TT_ASSERT_NOT_NULL(dir);
-    TT_ASSERT_STR_CONTAINS(dir, ".toktoken");
+    TT_ASSERT_STR_CONTAINS(dir, "toktoken");
     TT_ASSERT_STR_CONTAINS(dir, "gh-repos");
     TT_ASSERT_STR_CONTAINS(dir, "testowner");
     TT_ASSERT_STR_ENDS_WITH(dir, "testrepo");
@@ -392,7 +392,7 @@ TT_TEST(test_repos_base_dir)
 {
     char *base = tt_gh_repos_base_dir();
     TT_ASSERT_NOT_NULL(base);
-    TT_ASSERT_STR_CONTAINS(base, ".toktoken");
+    TT_ASSERT_STR_CONTAINS(base, "toktoken");
     TT_ASSERT_STR_ENDS_WITH(base, "gh-repos");
     free(base);
 }

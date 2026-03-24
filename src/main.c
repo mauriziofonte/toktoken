@@ -14,6 +14,7 @@
 #include "cmd_find.h"
 #include "cmd_bundle.h"
 #include "cmd_update.h"
+#include "cmd_suggest.h"
 #include "cmd_help.h"
 #include "update_check.h"
 
@@ -81,6 +82,9 @@ static void print_usage(void)
             "Help:\n"
             "  help [command]         List all tools or show detailed usage\n"
             "\n"
+            "Discovery:\n"
+            "  suggest                Get suggested queries for exploring a codebase\n"
+            "\n"
             "Management:\n"
             "  stats                  Show index statistics\n"
             "  projects:list          List indexed projects\n"
@@ -92,7 +96,9 @@ static void print_usage(void)
             "\n"
             "MCP Server:\n"
             "  serve                  Start MCP server on STDIO\n"
-            "\n"
+            "\n");
+
+    fprintf(stderr,
             "Indexing options:\n"
             "  -m, --max-files <n>    Max files to index (default: 200000)\n"
             "  -f, --full             Disable smart filter, index all file types\n"
@@ -183,6 +189,7 @@ static const cmd_entry_t commands[] = {
     {"inspect:hierarchy", tt_cmd_inspect_hierarchy},
     {"inspect:cycles", tt_cmd_inspect_cycles},
     {"inspect:blast", tt_cmd_inspect_blast},
+    {"suggest", tt_cmd_suggest},
     {"serve", tt_cmd_serve},
     {"help", tt_cmd_help},
     {NULL, NULL}};

@@ -136,4 +136,12 @@ void tt_utf8_truncate(char *s, size_t max_bytes);
  */
 size_t tt_utf8_strlen(const char *s);
 
+/*
+ * tt_memfind -- Portable memmem replacement (C11-safe, no _GNU_SOURCE needed).
+ *
+ * Returns pointer to first occurrence of needle in haystack, or NULL.
+ */
+const void *tt_memfind(const void *haystack, size_t hlen,
+                       const void *needle, size_t nlen);
+
 #endif /* TT_STR_UTIL_H */

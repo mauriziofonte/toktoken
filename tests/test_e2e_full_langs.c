@@ -144,6 +144,24 @@ E2E_OUTLINE_LANG(test_lang_outline_graphql,
 E2E_OUTLINE_LANG(test_lang_outline_julia,
                  "src/julia/simulation.jl", 5)
 
+/* Razor (custom parser) */
+E2E_SEARCH_LANG(test_lang_search_razor,
+                "HandleClick", "method", "razor/Page")
+E2E_OUTLINE_LANG(test_lang_outline_razor,
+                 "src/razor/Page.cshtml", 4)
+
+/* Twig (custom parser) */
+E2E_SEARCH_LANG(test_lang_search_twig,
+                "formatDate", "method", "twig/Page")
+E2E_OUTLINE_LANG(test_lang_outline_twig,
+                 "src/twig/Page.html.twig", 5)
+
+/* Blade (custom parser) */
+E2E_SEARCH_LANG(test_lang_search_blade,
+                "section", "directive", "blade/Page")
+E2E_OUTLINE_LANG(test_lang_outline_blade,
+                 "src/blade/Page.blade.php", 7)
+
 /* Markdown (ctags) */
 E2E_SEARCH_LANG(test_lang_search_markdown,
                 "Installation", "section", "markdown/guide")
@@ -211,6 +229,18 @@ void run_e2e_full_langs_tests(void)
     TT_RUN(test_lang_outline_nix);
     TT_RUN(test_lang_outline_graphql);
     TT_RUN(test_lang_outline_julia);
+
+    /* Razor */
+    TT_RUN(test_lang_search_razor);
+    TT_RUN(test_lang_outline_razor);
+
+    /* Twig */
+    TT_RUN(test_lang_search_twig);
+    TT_RUN(test_lang_outline_twig);
+
+    /* Blade */
+    TT_RUN(test_lang_search_blade);
+    TT_RUN(test_lang_outline_blade);
 
     /* Markdown */
     TT_RUN(test_lang_search_markdown);

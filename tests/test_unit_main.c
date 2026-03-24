@@ -32,6 +32,7 @@ extern void run_jinja_strip_tests(void);
 extern void run_import_extractor_tests(void);
 extern void run_update_check_tests(void);
 extern void run_cli_tests(void);
+extern void run_mcp_log_tests(void);
 
 int main(void)
 {
@@ -109,6 +110,8 @@ int main(void)
 
     TT_SUITE("CLI");
     run_cli_tests();
+
+    run_mcp_log_tests();
 
     TT_SUMMARY();
 }

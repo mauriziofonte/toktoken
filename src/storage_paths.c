@@ -60,15 +60,49 @@ char *tt_storage_base_dir(void)
         return NULL;
     }
 
-    char *base = tt_path_join(cache, ".toktoken");
+    char *new_path = tt_path_join(cache, "toktoken");
+    char *old_path = tt_path_join(cache, ".toktoken");
     free(cache);
-    if (!base)
+
+    if (!new_path || !old_path)
     {
+        free(new_path);
+        free(old_path);
         tt_error_set("storage_paths: path_join failed");
         return NULL;
     }
 
-    return base;
+    /* Fast path: new directory already exists */
+    if (tt_is_dir(new_path))
+    {
+        free(old_path);
+        return new_path;
+    }
+
+    /* Migration: old directory exists, new doesn't → atomic rename */
+    if (tt_is_dir(old_path))
+    {
+        if (rename(old_path, new_path) == 0)
+        {
+            /* Migration succeeded */
+            free(old_path);
+            return new_path;
+        }
+        /* rename failed — check if another process migrated concurrently */
+        if (tt_is_dir(new_path))
+        {
+            free(old_path);
+            return new_path;
+        }
+        /* rename failed and new still doesn't exist — another process
+         * is actively using old_path. Degrade gracefully: use old. */
+        free(new_path);
+        return old_path;
+    }
+
+    /* Fresh install: neither exists → use new name */
+    free(old_path);
+    return new_path;
 }
 
 char *tt_storage_projects_dir(void)

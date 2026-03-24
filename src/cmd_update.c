@@ -194,7 +194,7 @@ static int smoke_test(const char *binary_path)
 
     int ok = (res.exit_code == 0 &&
               res.stdout_buf &&
-              strstr(res.stdout_buf, "toktoken") != NULL);
+              tt_strcasestr(res.stdout_buf, "toktoken") != NULL);
 
     tt_proc_result_free(&res);
 

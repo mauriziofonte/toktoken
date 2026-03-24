@@ -37,7 +37,8 @@ and detects all changes including uncommitted edits.
 - `toktoken find:callers "<id>"` -- find symbols that likely call a function
 - `toktoken find:dead` -- find unreferenced symbols
 - `toktoken search:cooccurrence "<a>,<b>"` -- find symbols co-occurring in same file
-- `toktoken search:similar "<id>"` -- find similar symbols by name/summary
+- `toktoken search:similar "<id>"` -- find similar symbols by name/summary (import-aware)
+- `toktoken suggest` -- onboarding discovery: keywords, distributions, most-imported, examples
 - `toktoken inspect:dependencies "<file>"` -- trace transitive import graph
 - `toktoken inspect:hierarchy "<file>"` -- show class/function parent-child hierarchy
 - `toktoken stats` -- index statistics

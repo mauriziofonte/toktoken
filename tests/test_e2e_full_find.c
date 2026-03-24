@@ -124,6 +124,58 @@ TT_TEST(test_full_find_references)
     }
 }
 
+/* ---------- find:references --check ---------- */
+
+TT_TEST(test_full_find_references_check_true)
+{
+    full_ensure_index();
+    if (!g_full_indexed) return;
+
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd),
+             "find:references Analyzer --check --path %s", g_full_fixture);
+    cJSON *json = NULL;
+    int rc = tt_e2e_run(cmd, &json);
+
+    TT_ASSERT_EQ_INT(0, rc);
+    TT_ASSERT_NOT_NULL(json);
+    if (json) {
+        cJSON *is_ref = cJSON_GetObjectItemCaseSensitive(json, "is_referenced");
+        TT_ASSERT(cJSON_IsTrue(is_ref), "Analyzer should be referenced");
+        cJSON *ic = cJSON_GetObjectItemCaseSensitive(json, "import_count");
+        TT_ASSERT(cJSON_IsNumber(ic), "should have import_count");
+        cJSON *cc = cJSON_GetObjectItemCaseSensitive(json, "content_count");
+        TT_ASSERT(cJSON_IsNumber(cc), "should have content_count");
+        /* No references array in check mode */
+        TT_ASSERT(cJSON_GetObjectItemCaseSensitive(json, "references") == NULL,
+                  "check mode should not include references array");
+        cJSON_Delete(json);
+    }
+}
+
+TT_TEST(test_full_find_references_check_false)
+{
+    full_ensure_index();
+    if (!g_full_indexed) return;
+
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd),
+             "find:references nonexistent_xyzzy_999 --check --path %s",
+             g_full_fixture);
+    cJSON *json = NULL;
+    int rc = tt_e2e_run(cmd, &json);
+
+    TT_ASSERT_EQ_INT(0, rc);
+    TT_ASSERT_NOT_NULL(json);
+    if (json) {
+        cJSON *is_ref = cJSON_GetObjectItemCaseSensitive(json, "is_referenced");
+        TT_ASSERT(cJSON_IsFalse(is_ref), "nonexistent symbol should not be referenced");
+        cJSON *ic = cJSON_GetObjectItemCaseSensitive(json, "import_count");
+        TT_ASSERT_EQ_INT(0, ic->valueint);
+        cJSON_Delete(json);
+    }
+}
+
 /* ---------- find:callers ---------- */
 
 TT_TEST(test_full_find_callers)
@@ -241,6 +293,8 @@ void run_e2e_full_find_tests(void)
     TT_RUN(test_full_find_importers_js);
     TT_RUN(test_full_find_importers_python);
     TT_RUN(test_full_find_references);
+    TT_RUN(test_full_find_references_check_true);
+    TT_RUN(test_full_find_references_check_false);
     TT_RUN(test_full_find_callers);
     TT_RUN(test_full_find_dead);
     TT_RUN(test_full_find_dead_symbols);

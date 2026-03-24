@@ -5,7 +5,7 @@
  * All shell interactions use tt_proc_run() with argument arrays (no
  * string interpolation) to prevent command injection.
  *
- * Repository clones are stored under ~/.cache/.toktoken/gh-repos/{owner}/{repo}/.
+ * Repository clones are stored under ~/.cache/toktoken/gh-repos/{owner}/{repo}/.
  */
 
 #ifndef TT_GITHUB_H
@@ -69,7 +69,7 @@ int tt_gh_validate_repo(const char *repo_spec,
 /* ---- Repository directory management ---- */
 
 /*
- * tt_gh_repos_base_dir -- Base directory for cloned repos (~/.cache/.toktoken/gh-repos).
+ * tt_gh_repos_base_dir -- Base directory for cloned repos (~/.cache/toktoken/gh-repos).
  *
  * [caller-frees] Returns NULL on error.
  */
@@ -78,7 +78,7 @@ char *tt_gh_repos_base_dir(void);
 /*
  * tt_gh_repo_dir -- Full path for a specific repo clone.
  *
- * Returns ~/.cache/.toktoken/gh-repos/{owner}/{repo}/
+ * Returns ~/.cache/toktoken/gh-repos/{owner}/{repo}/
  * Creates intermediate directories if needed.
  *
  * [caller-frees] Returns NULL on error.
@@ -122,7 +122,7 @@ int tt_gh_pull(const char *target_dir, char **out_message);
 /*
  * tt_gh_remove_repo -- Remove a cloned repository.
  *
- * Deletes the directory ~/.cache/.toktoken/gh-repos/{owner}/{repo}/ recursively.
+ * Deletes the directory ~/.cache/toktoken/gh-repos/{owner}/{repo}/ recursively.
  * Returns 0 on success, -1 on error.
  */
 int tt_gh_remove_repo(const char *owner, const char *repo);
@@ -130,7 +130,7 @@ int tt_gh_remove_repo(const char *owner, const char *repo);
 /*
  * tt_gh_remove_all_repos -- Remove all cloned repositories.
  *
- * Deletes ~/.cache/.toktoken/gh-repos/ recursively.
+ * Deletes ~/.cache/toktoken/gh-repos/ recursively.
  * Returns 0 on success, -1 on error.
  */
 int tt_gh_remove_all_repos(void);

@@ -63,6 +63,7 @@ static const flag_def_t flag_table[] = {
     BOOL_FLAG( 0,  "include-callers", include_callers),
     STR_FLAG ( 0,  "detail",          detail),
     INT_FLAG ( 0,  "token-budget",    token_budget),
+    BOOL_FLAG( 0,  "check",          check),
     BOOL_FLAG( 0,  "exclude-tests",  exclude_tests),
     BOOL_FLAG( 0,  "cross-dir",      cross_dir),
     INT_FLAG ( 0,  "min-length",     min_length),

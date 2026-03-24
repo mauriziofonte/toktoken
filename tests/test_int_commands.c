@@ -14,6 +14,8 @@
 #include "cmd_search.h"
 #include "cmd_inspect.h"
 #include "cmd_index.h"
+#include "cmd_manage.h"
+#include "cmd_suggest.h"
 #include "cli.h"
 #include "json_output.h"
 #include "error.h"
@@ -93,6 +95,16 @@ static void setup_fixture(void)
         "        \"\"\"Set a cache entry.\"\"\"\n"
         "        pass\n";
     tt_test_write_file(test_dir, "src/cache.py", py_content);
+
+    /* JS file that imports from utils.js — creates import data */
+    const char *app_js_content =
+        "import { calculateSum } from './utils';\n"
+        "const { validateInput } = require('./utils');\n"
+        "\n"
+        "function runApp() {\n"
+        "    return calculateSum(1, 2);\n"
+        "}\n";
+    tt_test_write_file(test_dir, "src/app.js", app_js_content);
 }
 
 static void cleanup_fixture(void)
@@ -105,7 +117,7 @@ static void cleanup_fixture(void)
 
     /* Also clean up the index */
     char cmd[600];
-    snprintf(cmd, sizeof(cmd), "rm -rf ~/.cache/.toktoken/projects/");
+    snprintf(cmd, sizeof(cmd), "rm -rf ~/.cache/toktoken/projects/");
     if (system(cmd) != 0) { /* best-effort cleanup */ }
 }
 
@@ -1011,6 +1023,151 @@ TT_TEST(test_int_evil_symbol_id)
     assert_symbol_rejects("   ");
 }
 
+/* ---- Query length limit tests ---- */
+
+TT_TEST(test_int_search_symbols_query_too_long)
+{
+    tt_cli_opts_t opts;
+    init_opts(&opts);
+
+    /* Build a 501-char query */
+    char long_query[502];
+    memset(long_query, 'a', 501);
+    long_query[501] = '\0';
+
+    const char *pos[] = {long_query};
+    opts.positional = pos;
+    opts.positional_count = 1;
+
+    cJSON *result = tt_cmd_search_symbols_exec(&opts);
+    TT_ASSERT_NOT_NULL(result);
+    cJSON *err = cJSON_GetObjectItem(result, "error");
+    TT_ASSERT_NOT_NULL(err);
+    TT_ASSERT_EQ_STR("invalid_value", err->valuestring);
+    TT_ASSERT_STR_CONTAINS(cJSON_GetObjectItem(result, "message")->valuestring,
+                            "500");
+    cJSON_Delete(result);
+}
+
+TT_TEST(test_int_search_symbols_query_at_limit)
+{
+    tt_cli_opts_t opts;
+    init_opts(&opts);
+
+    /* Build exactly 500-char query — should be accepted */
+    char query_500[501];
+    memset(query_500, 'x', 500);
+    query_500[500] = '\0';
+
+    const char *pos[] = {query_500};
+    opts.positional = pos;
+    opts.positional_count = 1;
+
+    cJSON *result = tt_cmd_search_symbols_exec(&opts);
+    TT_ASSERT_NOT_NULL(result);
+    /* Should NOT have an error (query accepted, even if 0 results) */
+    TT_ASSERT(cJSON_GetObjectItem(result, "error") == NULL,
+              "500-char query should be accepted");
+    cJSON_Delete(result);
+}
+
+TT_TEST(test_int_search_text_query_too_long)
+{
+    tt_cli_opts_t opts;
+    init_opts(&opts);
+
+    char long_query[502];
+    memset(long_query, 'b', 501);
+    long_query[501] = '\0';
+
+    const char *pos[] = {long_query};
+    opts.positional = pos;
+    opts.positional_count = 1;
+
+    cJSON *result = tt_cmd_search_text_exec(&opts);
+    TT_ASSERT_NOT_NULL(result);
+    cJSON *err = cJSON_GetObjectItem(result, "error");
+    TT_ASSERT_NOT_NULL(err);
+    TT_ASSERT_EQ_STR("invalid_value", err->valuestring);
+    cJSON_Delete(result);
+}
+
+/* ---------- stats: most_imported_files ---------- */
+
+TT_TEST(test_int_stats_most_imported_files)
+{
+    tt_cli_opts_t opts;
+    init_opts(&opts);
+
+    cJSON *result = tt_cmd_stats_exec(&opts);
+    TT_ASSERT_NOT_NULL(result);
+    if (result) {
+        cJSON *mif = cJSON_GetObjectItemCaseSensitive(result, "most_imported_files");
+        TT_ASSERT(cJSON_IsArray(mif), "stats should have most_imported_files array");
+
+        /* The fixture has app.js importing from utils.js, so we expect >= 1 entry */
+        if (cJSON_IsArray(mif) && cJSON_GetArraySize(mif) > 0) {
+            cJSON *first = cJSON_GetArrayItem(mif, 0);
+            TT_ASSERT_NOT_NULL(cJSON_GetObjectItemCaseSensitive(first, "file"));
+            TT_ASSERT_NOT_NULL(cJSON_GetObjectItemCaseSensitive(first, "import_count"));
+
+            cJSON *ic = cJSON_GetObjectItemCaseSensitive(first, "import_count");
+            if (cJSON_IsNumber(ic))
+                TT_ASSERT_GE_INT(ic->valueint, 1);
+        }
+        cJSON_Delete(result);
+    }
+}
+
+/* ---------- suggest ---------- */
+
+TT_TEST(test_int_suggest_basic)
+{
+    tt_cli_opts_t opts;
+    init_opts(&opts);
+
+    cJSON *result = tt_cmd_suggest_exec(&opts);
+    TT_ASSERT_NOT_NULL(result);
+    if (result) {
+        TT_ASSERT(cJSON_GetObjectItem(result, "error") == NULL,
+                  "suggest should not return error");
+
+        /* All 5 fields must be present */
+        cJSON *kw = cJSON_GetObjectItemCaseSensitive(result, "top_keywords");
+        TT_ASSERT(cJSON_IsArray(kw), "should have top_keywords array");
+
+        cJSON *kd = cJSON_GetObjectItemCaseSensitive(result, "kind_distribution");
+        TT_ASSERT(cJSON_IsObject(kd), "should have kind_distribution object");
+
+        cJSON *ld = cJSON_GetObjectItemCaseSensitive(result, "language_distribution");
+        TT_ASSERT(cJSON_IsObject(ld), "should have language_distribution object");
+
+        cJSON *mif = cJSON_GetObjectItemCaseSensitive(result, "most_imported_files");
+        TT_ASSERT(cJSON_IsArray(mif), "should have most_imported_files array");
+
+        cJSON *eq = cJSON_GetObjectItemCaseSensitive(result, "example_queries");
+        TT_ASSERT(cJSON_IsArray(eq), "should have example_queries array");
+
+        /* Keywords should be sorted by frequency descending */
+        if (cJSON_IsArray(kw) && cJSON_GetArraySize(kw) >= 2) {
+            cJSON *first = cJSON_GetArrayItem(kw, 0);
+            cJSON *second = cJSON_GetArrayItem(kw, 1);
+            int f1 = cJSON_GetObjectItem(first, "count")->valueint;
+            int f2 = cJSON_GetObjectItem(second, "count")->valueint;
+            TT_ASSERT_GE_INT(f1, f2);
+        }
+
+        /* Example queries should be non-empty strings */
+        if (cJSON_IsArray(eq) && cJSON_GetArraySize(eq) > 0) {
+            cJSON *first = cJSON_GetArrayItem(eq, 0);
+            TT_ASSERT(cJSON_IsString(first) && strlen(first->valuestring) > 0,
+                      "example queries should be non-empty strings");
+        }
+
+        cJSON_Delete(result);
+    }
+}
+
 /* ---- Runner ---- */
 
 void run_int_commands_tests(void)
@@ -1050,6 +1207,17 @@ void run_int_commands_tests(void)
     /* inspect:tree */
     TT_RUN(test_int_inspect_tree_basic);
     TT_RUN(test_int_inspect_tree_depth);
+
+    /* stats */
+    TT_RUN(test_int_stats_most_imported_files);
+
+    /* suggest */
+    TT_RUN(test_int_suggest_basic);
+
+    /* query length limit */
+    TT_RUN(test_int_search_symbols_query_too_long);
+    TT_RUN(test_int_search_symbols_query_at_limit);
+    TT_RUN(test_int_search_text_query_too_long);
 
     /* extreme malicious path tests */
     TT_RUN(test_int_evil_path_traversal);

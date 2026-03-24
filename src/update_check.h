@@ -1,7 +1,7 @@
 /*
  * update_check.h -- Upstream version cache and update detection.
  *
- * Caches the latest upstream version in ~/.cache/.toktoken/UPSTREAM_VERSION.
+ * Caches the latest upstream version in ~/.cache/toktoken/UPSTREAM_VERSION.
  * Refreshes at most once every 12 hours via curl (non-blocking on failure).
  */
 

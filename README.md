@@ -34,7 +34,7 @@ Works with Claude Code, Cursor, Windsurf, Copilot, Gemini, Codex, **and any MCP-
 
 ## Features
 
-- **47 languages** via [universal-ctags](https://ctags.io/) + 14 custom parsers (see [docs/LANGUAGES.md](docs/LANGUAGES.md))
+- **49 languages** via [universal-ctags](https://ctags.io/) + 16 custom parsers (see [docs/LANGUAGES.md](docs/LANGUAGES.md))
 - **Import graph**: cross-file dependency tracking with `find:importers`, `find:references`, `find:callers`, and `inspect:dependencies`
 - **FTS5 search** with relevance scoring, cascading query strategies, and token-budget-aware result slicing
 - **Incremental indexing** using content hashing -- re-indexes only changed files, including single-file reindex
@@ -52,7 +52,7 @@ Works with Claude Code, Cursor, Windsurf, Copilot, Gemini, Codex, **and any MCP-
 - **Auto-update**: `--self-update` with SHA-256 verification and atomic binary replacement
 - **Cross-platform**: Linux (x64/ARM64/ARMv7), macOS (Intel/Apple Silicon), Windows (x64)
 - **Single static binary**: no runtime requirements beyond `universal-ctags` (see below)
-- **No project pollution**: all data stored under `~/.cache/.toktoken/`, nothing written inside your project
+- **No project pollution**: all data stored under `~/.cache/toktoken/`, nothing written inside your project
 
 ## Prerequisites
 
@@ -121,12 +121,13 @@ toktoken index:update
 | `inspect:dependencies <file>` | Trace transitive import graph (recursive) |
 | `inspect:hierarchy <file>` | Show class/function hierarchy with parent-child relationships |
 | `find:importers <file>` | Find files that import a given file |
-| `find:references <id>` | Find import references to an identifier |
+| `find:references <id>` | Find import references to an identifier. Use `--check` for boolean reference check |
 | `find:callers <id>` | Find symbols that likely call a given function/method |
 | `find:dead` | Find symbols with no callers or importers (dead code detection) |
 | `inspect:blast <id>` | Symbol blast radius analysis (files transitively affected by a change) |
 | `inspect:cycles` | Detect circular import chains in the dependency graph |
 | `help [command]` | List all tools or show detailed usage for a specific tool |
+| `suggest` | Onboarding discovery: top keywords, kind/language distribution, most-imported files, example queries |
 | `stats` | Index statistics + token savings report |
 | `cache:clear` | Delete current project index. With `--all --force`: delete all TokToken data |
 | `codebase:detect [path]` | Detect if directory is a codebase |
@@ -324,7 +325,7 @@ For Cursor, Windsurf, Gemini CLI, Gemini Code Assist, and Claude Desktop, add th
 | Gemini Code Assist | `.gemini/settings.json` in project root | [setup](docs/setup/gemini-code-assist.md) |
 | OpenAI Codex CLI | `AGENTS.md` in project root (no MCP) | [setup](docs/setup/codex-cli.md) |
 
-Exposes 26 tools: `codebase_detect`, `index_create`, `index_update`, `index_file`, `index_github`, `search_symbols`, `search_text`, `search_cooccurrence`, `search_similar`, `inspect_outline`, `inspect_symbol`, `inspect_file`, `inspect_tree`, `inspect_bundle`, `inspect_dependencies`, `inspect_hierarchy`, `inspect_cycles`, `inspect_blast_radius`, `find_importers`, `find_references`, `find_callers`, `find_dead`, `stats`, `projects_list`, `cache_clear`, `help`.
+Exposes 27 tools: `codebase_detect`, `index_create`, `index_update`, `index_file`, `index_github`, `search_symbols`, `search_text`, `search_cooccurrence`, `search_similar`, `inspect_outline`, `inspect_symbol`, `inspect_file`, `inspect_tree`, `inspect_bundle`, `inspect_dependencies`, `inspect_hierarchy`, `inspect_cycles`, `inspect_blast_radius`, `find_importers`, `find_references`, `find_callers`, `find_dead`, `suggest`, `stats`, `projects_list`, `cache_clear`, `help`.
 
 ## AI Agent Setup
 
@@ -365,20 +366,59 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development workflow, coding standard
 
 TokToken stores all data outside the project directory. Nothing is written inside your codebase.
 
+### Cache directory
+
+The cache directory holds indexes, logs, GitHub clones, and the update-check cache.
+
+| OS | Path |
+| -- | ---- |
+| Linux | `~/.cache/toktoken/` (`$HOME/.cache/toktoken/`) |
+| macOS | `~/.cache/toktoken/` (`$HOME/.cache/toktoken/`) |
+| Windows | `%USERPROFILE%\.cache\toktoken\` (e.g. `C:\Users\<name>\.cache\toktoken\`) |
+
+Home directory resolution: on Unix, `$HOME`; on Windows, `%USERPROFILE%` with `SHGetFolderPathW(CSIDL_PROFILE)` fallback.
+
 ```text
-~/.cache/.toktoken/
-    projects/<hash>/db.sqlite   Index database (one per project, hash from canonical path)
-    gh-repos/<owner>/<repo>/    GitHub repos cloned via index:github
-    logs/                       Diagnostic logs (7-day auto-rotation)
-    UPSTREAM_VERSION             Cached latest release version (12h refresh cycle)
+~/.cache/toktoken/
+    projects/
+        <hash>/                 Project directory (hash = first 12 hex chars of xxhash of canonical path)
+            db.sqlite           SQLite database (schema v4, WAL mode)
+            db.sqlite-wal       WAL journal (auto-managed by SQLite)
+            db.sqlite-shm       Shared memory file (auto-managed by SQLite)
+    gh-repos/
+        <owner>/<repo>/         Shallow clone of GitHub repo (via index:github)
+    logs/
+        mcp.jsonl               MCP tool call + lifecycle log (append-only JSONL)
+    UPSTREAM_VERSION            Cached latest release version (plain text, 12h refresh via curl)
 ```
 
-Configuration files (optional):
+**Database contents** (per project, in `db.sqlite`):
 
-```text
-~/.toktoken.json               Global config (all sections)
-<project>/.toktoken.json       Project config (index section only)
-```
+| Table | Purpose |
+| ----- | ------- |
+| `metadata` | Key-value store: `project_path`, `schema_version`, `toktoken_version`, `indexed_at`, `git_head`, `full_index` |
+| `files` | Indexed files with path, content hash, language, summary, size, mtime |
+| `symbols` | Extracted symbols: name, qualified name, kind, signature, docstring, line range |
+| `symbols_fts` | FTS5 virtual table for full-text symbol search |
+| `imports` | Import/dependency edges between files |
+| `file_centrality` | PageRank-style centrality scores per file |
+
+### Configuration files
+
+Optional, not created by default:
+
+| OS | Global config | Project config |
+| -- | ------------- | -------------- |
+| Linux / macOS | `~/.toktoken.json` | `<project>/.toktoken.json` |
+| Windows | `%USERPROFILE%\.toktoken.json` | `<project>\.toktoken.json` |
+
+Global config supports all sections (`index`, `logging`). Project config supports only the `index` section. See [CONFIGURATION.md](docs/CONFIGURATION.md) for the full reference.
+
+### Migration from v0.3.x
+
+Prior to v0.4.0, the cache directory was `~/.cache/.toktoken/` (dot-prefixed). On first access, TokToken atomically renames the old directory to `~/.cache/toktoken/`. If another process holds the old path (e.g. a concurrent MCP server), the rename is deferred to the next invocation. No data is lost.
+
+### Cleanup
 
 `cache:clear` deletes the current project's index database. `cache:clear --all --force` removes all TokToken data (indexes, GitHub clones, logs).
 
@@ -388,6 +428,7 @@ Configuration files (optional):
 | -------- | ----------- |
 | [docs/LLM.md](docs/LLM.md) | AI agent setup and integration guide |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture and data flow |
+| [docs/ASSESSMENT.md](docs/ASSESSMENT.md) | Tool assessment results and methodology |
 | [docs/SECURITY.md](docs/SECURITY.md) | Security model and threat mitigations |
 | [docs/LANGUAGES.md](docs/LANGUAGES.md) | Supported languages and parsers |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Configuration reference |

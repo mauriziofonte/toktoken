@@ -14,6 +14,8 @@
  *   Ruby:    require '...',  require_relative '...'
  *   C#:      using ...;
  *   Swift/Haskell: import ...
+ *   Blade:   @extends/@include/@component/@livewire/@each/@use('path'), <x-component>
+ *   Twig:    {% extends/include/embed/import/from/use 'path' %}
  */
 
 #include "import_extractor.h"
@@ -420,6 +422,149 @@ static void extract_csharp(const char *from_file, const char *line, int line_num
     }
 }
 
+/* Twig: {% extends/include/embed/import/from/use 'path' %} */
+static void extract_twig(const char *from_file, const char *line, int line_num,
+                          tt_import_t **arr, int *count, int *cap)
+{
+    const char *p = skip_ws(line);
+
+    /* Must start with {% (with optional whitespace modifier) */
+    if (*p != '{' || *(p + 1) != '%') return;
+    p += 2;
+    if (*p == '-' || *p == '~') p++;
+    p = skip_ws(p);
+
+    /* Detect tag name */
+    const char *tag = NULL;
+    const char *itype = NULL;
+    if (strncmp(p, "extends ", 8) == 0) { tag = p + 8; itype = "extends"; }
+    else if (strncmp(p, "include ", 8) == 0) { tag = p + 8; itype = "include"; }
+    else if (strncmp(p, "embed ", 6) == 0) { tag = p + 6; itype = "embed"; }
+    else if (strncmp(p, "import ", 7) == 0) { tag = p + 7; itype = "import"; }
+    else if (strncmp(p, "from ", 5) == 0) { tag = p + 5; itype = "from"; }
+    else if (strncmp(p, "use ", 4) == 0) { tag = p + 4; itype = "use"; }
+
+    if (!tag) return;
+    tag = skip_ws(tag);
+
+    /* Skip _self */
+    if (strncmp(tag, "_self", 5) == 0 && (tag[5] == ' ' || tag[5] == '%'))
+        return;
+
+    /* Skip dynamic (no quotes, not a list) */
+    if (*tag != '\'' && *tag != '"' && *tag != '[') return;
+
+    if (*tag == '[') {
+        /* List syntax: ['a.twig', 'b.twig'] */
+        tag++;
+        while (*tag && *tag != ']') {
+            if (*tag == '\'' || *tag == '"') {
+                char *spec = read_quoted(&tag);
+                if (spec) {
+                    add_import(arr, count, cap, from_file, spec, NULL, line_num, itype);
+                    free(spec);
+                }
+            } else {
+                tag++;
+            }
+        }
+    } else {
+        char *spec = read_quoted(&tag);
+        if (spec) {
+            add_import(arr, count, cap, from_file, spec, NULL, line_num, itype);
+            free(spec);
+        }
+    }
+}
+
+/* Blade: @extends/@include/@component/@livewire/@each/@use('path'), <x-component> */
+static void extract_blade(const char *from_file, const char *line, int line_num,
+                           tt_import_t **arr, int *count, int *cap)
+{
+    const char *p = line;
+    while (*p) {
+        /* Scan for @ directives */
+        if (*p == '@') {
+            p++;
+            const char *itype = NULL;
+            const char *after = NULL;
+            bool skip_first = false;
+
+            if (strncmp(p, "extends(", 8) == 0) { itype = "extends"; after = p + 8; }
+            else if (strncmp(p, "include(", 8) == 0) { itype = "include"; after = p + 8; }
+            else if (strncmp(p, "includeIf(", 10) == 0) { itype = "include"; after = p + 10; }
+            else if (strncmp(p, "includeWhen(", 12) == 0) { itype = "include"; after = p + 12; skip_first = true; }
+            else if (strncmp(p, "includeFirst(", 13) == 0) { itype = "include"; after = p + 13; }
+            else if (strncmp(p, "component(", 10) == 0) { itype = "component"; after = p + 10; }
+            else if (strncmp(p, "livewire(", 9) == 0) { itype = "livewire"; after = p + 9; }
+            else if (strncmp(p, "each(", 5) == 0) { itype = "include"; after = p + 5; }
+            else if (strncmp(p, "use(", 4) == 0) { itype = "use"; after = p + 4; }
+
+            if (!itype) continue;
+            const char *q = skip_ws(after);
+
+            /* @includeWhen: skip first arg to comma */
+            if (skip_first) {
+                int depth = 0;
+                while (*q) {
+                    if (*q == '(') depth++;
+                    else if (*q == ')') { if (depth == 0) break; depth--; }
+                    else if (*q == ',' && depth == 0) { q++; break; }
+                    q++;
+                }
+                q = skip_ws(q);
+            }
+
+            /* List syntax: ['a', 'b'] */
+            if (*q == '[') {
+                q++;
+                while (*q && *q != ']') {
+                    if (*q == '\'' || *q == '"') {
+                        char *spec = read_quoted(&q);
+                        if (spec) {
+                            add_import(arr, count, cap, from_file, spec, NULL, line_num, itype);
+                            free(spec);
+                        }
+                    } else {
+                        q++;
+                    }
+                }
+            } else if (*q == '\'' || *q == '"') {
+                char *spec = read_quoted(&q);
+                if (spec) {
+                    add_import(arr, count, cap, from_file, spec, NULL, line_num, itype);
+                    free(spec);
+                }
+            }
+            p = q;
+            continue;
+        }
+
+        /* Scan for <x-component> */
+        if (*p == '<' && *(p + 1) == 'x' && *(p + 2) == '-') {
+            p += 3;
+            const char *name_start = p;
+            while (*p && (isalnum((unsigned char)*p) || *p == '-' || *p == '.' || *p == ':' || *p == '_'))
+                p++;
+            size_t nlen = (size_t)(p - name_start);
+            if (nlen > 0) {
+                char *name = tt_strndup(name_start, nlen);
+                if (name) {
+                    /* Skip dynamic-component, slot, and closing tags */
+                    if (strcmp(name, "dynamic-component") != 0 &&
+                        strncmp(name, "slot", 4) != 0) {
+                        add_import(arr, count, cap, from_file, name, NULL, line_num, "component");
+                    }
+                    free(name);
+                }
+            }
+            continue;
+        }
+
+        p++;
+    }
+}
+
 /* Swift/Haskell: import ... */
 static void extract_import_simple(const char *from_file, const char *line, int line_num,
                                   tt_import_t **arr, int *count, int *cap)
@@ -474,8 +619,9 @@ static lang_extractor_t get_extractor(const char *language)
         strcmp(language, "scala") == 0)
         return extract_java;
 
-    if (strcmp(language, "php") == 0 ||
-        strcmp(language, "blade") == 0)
+    if (strcmp(language, "blade") == 0)
+        return extract_blade;
+    if (strcmp(language, "php") == 0)
         return extract_php;
 
     if (strcmp(language, "ruby") == 0) return extract_ruby;
@@ -486,6 +632,9 @@ static lang_extractor_t get_extractor(const char *language)
     if (strcmp(language, "swift") == 0 ||
         strcmp(language, "haskell") == 0)
         return extract_import_simple;
+
+    if (strcmp(language, "twig") == 0)
+        return extract_twig;
 
     return NULL;
 }

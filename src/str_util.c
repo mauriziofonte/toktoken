@@ -388,3 +388,18 @@ size_t tt_utf8_strlen(const char *s)
     }
     return count;
 }
+
+const void *tt_memfind(const void *haystack, size_t hlen,
+                       const void *needle, size_t nlen)
+{
+    if (nlen == 0) return haystack;
+    if (nlen > hlen) return NULL;
+    const unsigned char *h = (const unsigned char *)haystack;
+    const unsigned char *n = (const unsigned char *)needle;
+    size_t limit = hlen - nlen + 1;
+    for (size_t i = 0; i < limit; i++) {
+        if (h[i] == n[0] && memcmp(h + i, n, nlen) == 0)
+            return h + i;
+    }
+    return NULL;
+}

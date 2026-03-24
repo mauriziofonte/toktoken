@@ -82,6 +82,8 @@ static const ext_map_entry_t EXT_MAP[] = {
     {"nix", "nix"},
     {"gleam", "gleam"},
     {"ejs", "ejs"},
+    {"cshtml", "razor"},
+    {"twig", "twig"},
     {"m", "objc"},
     {"mm", "objcpp"},
     {"proto", "protobuf"},

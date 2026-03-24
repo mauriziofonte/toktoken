@@ -142,7 +142,7 @@ TokToken supports two integration modes:
 
 ### 3.1 MCP server configuration
 
-TokToken runs as a local stdio MCP server. It exposes 26 tools via JSON-RPC 2.0 on stdin/stdout. Find your agent below and follow the linked setup guide:
+TokToken runs as a local stdio MCP server. It exposes 27 tools via JSON-RPC 2.0 on stdin/stdout. Find your agent below and follow the linked setup guide:
 
 | Agent | Config format | Config file | Setup guide |
 | ----- | ------------- | ----------- | ----------- |
@@ -236,6 +236,7 @@ toktoken index:update
 | `inspect_cycles` | Detect circular import cycles (Tarjan's SCC) |
 | `find_dead` | Find unreferenced symbols (dead/unreferenced classification, confidence levels) |
 | `index_file` | Reindex a single file without rebuilding the full index |
+| `suggest` | Onboarding discovery: top keywords, kind/language distribution, most-imported files, example queries |
 | `help` | Get usage details for a TokToken tool, or list all tools |
 
 ### CLI command reference
@@ -357,7 +358,7 @@ toktoken inspect:tree --depth 2
 | `inspect:cycles` | Detect circular import cycles using Tarjan's SCC algorithm |
 | `find:importers <file>` | Find files that import a given file. Use `--has-importers` to filter to only files that have at least one importer |
 | `find:dead` | Find unreferenced symbols with dead/unreferenced classification and confidence levels |
-| `find:references <id>` | Find import statements referencing an identifier |
+| `find:references <id>` | Find import statements referencing an identifier. Use `--check` for boolean reference check |
 | `find:callers <id>` | Find symbols that likely call a given function/method |
 | `search:cooccurrence "<a>,<b>"` | Find symbols that co-occur in the same file |
 | `search:similar <id>` | Find symbols similar to a given one |
@@ -467,29 +468,34 @@ Map the full dependency graph before making changes.
 
 ### "I want to understand the architecture of an unfamiliar project"
 
-Top-down exploration using structural commands only (no source reading).
+Top-down exploration using structural commands only (no source reading). Start with `suggest` for instant orientation.
 
 ```text
-1. toktoken inspect:tree --depth 2
+1. toktoken suggest
+   --> Get top keywords, kind/language distribution, most-imported files,
+   --> and ready-to-run example queries. This single call replaces steps 2-7
+   --> for initial orientation.
+
+2. toktoken inspect:tree --depth 2
    --> Get the directory structure. Understand the project layout.
 
-2. toktoken search:symbols "main|app|server|bootstrap" --kind function,class --unique --limit 10
+3. toktoken search:symbols "main|app|server|bootstrap" --kind function,class --unique --limit 10
    --> Find entry points.
 
-3. toktoken inspect:outline src/app.py --kind class,function
+4. toktoken inspect:outline src/app.py --kind class,function
    --> See the structure of the main entry point.
 
-4. toktoken inspect:hierarchy src/models/base.py
+5. toktoken inspect:hierarchy src/models/base.py
    --> See the class hierarchy. Which classes extend BaseModel?
    --> Understand the inheritance tree without reading any source.
 
-5. toktoken inspect:dependencies src/app.py --depth 2
+6. toktoken inspect:dependencies src/app.py --depth 2
    --> What does the entry point import? This shows the top-level architecture.
 
-6. toktoken search:cooccurrence "Router,Controller"
+7. toktoken search:cooccurrence "Router,Controller"
    --> Where are routing and controllers wired together?
 
-7. toktoken stats
+8. toktoken stats
    --> How big is this project? How many files, symbols, languages?
 ```
 
@@ -695,10 +701,14 @@ Likely causes:
 
 ### Permission denied errors
 
-TokToken stores its index under `~/.cache/.toktoken/`. If this directory has wrong permissions, run:
+TokToken stores its index under `~/.cache/toktoken/`. If this directory has wrong permissions, run:
 
 ```bash
-mkdir -p ~/.cache/.toktoken && chmod 755 ~/.cache/.toktoken
+mkdir -p ~/.cache/toktoken && chmod 755 ~/.cache/toktoken
 ```
 
-On Windows, the cache directory is `%LOCALAPPDATA%\.toktoken\`.
+On Windows, the cache directory is `%USERPROFILE%\.cache\toktoken\`.
+
+### MCP tool logging
+
+Every MCP tool call is logged to `~/.cache/toktoken/logs/mcp.jsonl` (append-only JSONL). Each line contains: timestamp, tool name, arguments, project path, duration, success/error. Lifecycle events (initialize, tools/list, shutdown) are also logged. This log is useful for analyzing how LLM agents use TokToken and diagnosing failures. Use `cache:clear --all --force` to reset it, or delete manually.

@@ -103,6 +103,31 @@ cJSON *tt_cmd_stats_exec(tt_cli_opts_t *opts)
         cJSON_AddNumberToObject(dirs, stats.dirs[i].name, stats.dirs[i].count);
     cJSON_AddItemToObject(result, "dirs", dirs);
 
+    /* most_imported_files: top 10 files by importer count */
+    {
+        const char *mif_sql =
+            "SELECT resolved_file, COUNT(DISTINCT source_file) AS import_count "
+            "FROM imports WHERE resolved_file != '' "
+            "GROUP BY resolved_file ORDER BY import_count DESC LIMIT 10";
+        sqlite3_stmt *mif_stmt = NULL;
+        if (sqlite3_prepare_v2(store.db->db, mif_sql, -1, &mif_stmt, NULL)
+            == SQLITE_OK)
+        {
+            cJSON *mif_arr = cJSON_CreateArray();
+            while (sqlite3_step(mif_stmt) == SQLITE_ROW)
+            {
+                const char *f = (const char *)sqlite3_column_text(mif_stmt, 0);
+                int cnt = sqlite3_column_int(mif_stmt, 1);
+                cJSON *entry = cJSON_CreateObject();
+                cJSON_AddStringToObject(entry, "file", f ? f : "");
+                cJSON_AddNumberToObject(entry, "import_count", cnt);
+                cJSON_AddItemToArray(mif_arr, entry);
+            }
+            cJSON_AddItemToObject(result, "most_imported_files", mif_arr);
+            sqlite3_finalize(mif_stmt);
+        }
+    }
+
     /* Staleness warning */
     char *indexed_at = tt_store_get_metadata(&store, "indexed_at");
     if (indexed_at && indexed_at[0])

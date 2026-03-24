@@ -265,6 +265,16 @@ cJSON *tt_cmd_search_symbols_exec(tt_cli_opts_t *opts)
     /* Resolve query */
     const char *query = resolve_query(opts);
 
+    /* Query length limit (security: prevent pathological FTS5 queries) */
+    if (query && strlen(query) > 500)
+    {
+        cJSON *err = make_error("invalid_value",
+                                "Query too long (max 500 chars).",
+                                "Shorten the query or use more specific terms.");
+        free(project_path);
+        return err;
+    }
+
     /* Parse kinds */
     int kind_count = 0;
     char *invalid_kind = NULL;
@@ -686,6 +696,17 @@ cJSON *tt_cmd_search_text_exec(tt_cli_opts_t *opts)
 
     /* Resolve query */
     const char *query_raw = resolve_query(opts);
+
+    /* Query length limit (security: prevent pathological text search) */
+    if (query_raw && strlen(query_raw) > 500)
+    {
+        cJSON *err = make_error("invalid_value",
+                                "Query too long (max 500 chars).",
+                                "Shorten the query or use more specific terms.");
+        free(project_path);
+        return err;
+    }
+
     if (!query_raw || !query_raw[0])
     {
         cJSON *err = make_error("empty_query",
@@ -1142,6 +1163,14 @@ cJSON *tt_cmd_search_cooccurrence_exec(tt_cli_opts_t *opts)
                            "Specify two comma-separated symbol names");
     }
 
+    /* Query length limit */
+    if (strlen(query) > 500)
+    {
+        return make_error("invalid_value",
+                           "Query too long (max 500 chars).",
+                           "Shorten the query or use more specific terms.");
+    }
+
     /* Split query on comma -> name_a, name_b */
     char *query_dup = tt_strdup(query);
     char *comma = strchr(query_dup, ',');
@@ -1276,6 +1305,60 @@ cJSON *tt_cmd_search_similar_exec(tt_cli_opts_t *opts)
     tt_search_results_t sr;
     tt_store_search_similar(&store, query, limit, &sr);
 
+    /* Import-awareness: boost results that share importers with source file.
+     * Extract source file from symbol ID (format: "file::name#kind"). */
+    const char *sep = strstr(query, "::");
+    if (sep && sr.count > 0)
+    {
+        size_t src_file_len = (size_t)(sep - query);
+        char *src_file = tt_strndup(query, src_file_len);
+        if (src_file)
+        {
+            /* Query shared importers: files that import both src_file and
+             * a result's file. Score boost = shared_count * 1.5 */
+            const char *shared_sql =
+                "SELECT COUNT(*) FROM imports a "
+                "JOIN imports b ON a.source_file = b.source_file "
+                "WHERE a.resolved_file = ? AND b.resolved_file = ? "
+                "AND a.resolved_file != b.resolved_file";
+            sqlite3_stmt *shared_stmt = NULL;
+            if (sqlite3_prepare_v2(store.db->db, shared_sql, -1,
+                                   &shared_stmt, NULL) == SQLITE_OK)
+            {
+                for (int i = 0; i < sr.count; i++)
+                {
+                    const char *res_file = sr.results[i].sym.file;
+                    if (!res_file || strcmp(res_file, src_file) == 0)
+                        continue;
+
+                    sqlite3_reset(shared_stmt);
+                    sqlite3_bind_text(shared_stmt, 1, src_file, -1,
+                                     SQLITE_TRANSIENT);
+                    sqlite3_bind_text(shared_stmt, 2, res_file, -1,
+                                     SQLITE_TRANSIENT);
+                    if (sqlite3_step(shared_stmt) == SQLITE_ROW)
+                    {
+                        int shared = sqlite3_column_int(shared_stmt, 0);
+                        if (shared > 0)
+                            sr.results[i].score += shared * 1.5;
+                    }
+                }
+                sqlite3_finalize(shared_stmt);
+            }
+            free(src_file);
+
+            /* Re-sort by updated score (descending) */
+            for (int i = 0; i < sr.count - 1; i++)
+                for (int j = i + 1; j < sr.count; j++)
+                    if (sr.results[j].score > sr.results[i].score)
+                    {
+                        tt_symbol_result_t tmp = sr.results[i];
+                        sr.results[i] = sr.results[j];
+                        sr.results[j] = tmp;
+                    }
+        }
+    }
+
     cJSON *result = cJSON_CreateObject();
     cJSON_AddStringToObject(result, "q", query);
     cJSON_AddNumberToObject(result, "n", sr.count);
@@ -1293,6 +1376,7 @@ cJSON *tt_cmd_search_similar_exec(tt_cli_opts_t *opts)
             cJSON_AddStringToObject(obj, "sig", r->sym.signature);
         if (r->sym.summary && r->sym.summary[0])
             cJSON_AddStringToObject(obj, "summary", r->sym.summary);
+        cJSON_AddNumberToObject(obj, "score", r->score);
         cJSON_AddItemToArray(arr, obj);
     }
 

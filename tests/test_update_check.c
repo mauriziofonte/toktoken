@@ -515,7 +515,7 @@ TT_TEST(test_storage_base_dir_exists)
     TT_ASSERT_NOT_NULL(base);
     if (base) {
         TT_ASSERT_TRUE(strlen(base) > 0);
-        TT_ASSERT_STR_CONTAINS(base, ".toktoken");
+        TT_ASSERT_STR_CONTAINS(base, "toktoken");
     }
     free(base);
 }

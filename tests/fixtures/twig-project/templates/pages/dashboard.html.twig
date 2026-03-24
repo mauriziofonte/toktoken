@@ -1,0 +1,35 @@
+{% extends 'base.html.twig' %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+    {% include 'components/header.html.twig' %}
+    {% include 'components/sidebar.html.twig' with {'items': menu} only %}
+
+    {# This is a comment — the following tag should NOT be extracted:
+       {% include 'should-not-appear.html.twig' %}
+    #}
+
+    {% for item in items %}
+        <div id="item-container" data-controller="dashboard--list">
+            {{ item.name }}
+        </div>
+    {% endfor %}
+
+    {% embed 'blocks/card.html.twig' %}
+        {% block card_body %}
+            <p>Dashboard content</p>
+        {% endblock %}
+    {% endembed %}
+
+    {% set page_title = 'My Dashboard' %}
+    {% set total_items = items|length %}
+
+    <div id="stats-panel">
+        {{ total_items }} items
+    </div>
+{% endblock %}
+
+{% block footer %}
+    {% include 'partials/footer.html.twig' %}
+{% endblock %}

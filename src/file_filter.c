@@ -85,6 +85,8 @@ static const char *SOURCE_EXTENSIONS[] = {
     "nix",                                         /* Nix */
     "gleam",                                       /* Gleam */
     "ejs",                                         /* EJS templates (JavaScript) */
+    "cshtml",                                      /* Razor (ASP.NET views) */
+    "twig",                                        /* Twig (Symfony/Laravel templates) */
     "m", "mm",                                     /* Objective-C */
     "proto",                                       /* Protocol Buffers */
     "sc",                                          /* Scala script */

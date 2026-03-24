@@ -38,6 +38,7 @@ Symbol Scorer / Text Search
 | `cmd_find.c` | `find:importers`, `find:references`, `find:callers`, `find:dead` |
 | `cmd_github.c` | `index:github` |
 | `cmd_manage.c` | `stats`, `projects:list`, `cache:clear`, `codebase:detect` |
+| `cmd_suggest.c` | `suggest` |
 | `cmd_help.c` | `help` |
 | `cmd_serve.c` | `serve` (MCP server) |
 | `cmd_update.c` | `--self-update` (SHA-256 verified binary replacement) |
@@ -52,7 +53,7 @@ Symbol Scorer / Text Search
 
 1. **File discovery** (`file_filter.c`): walks the project directory, applies gitignore rules, security filters, smart filter (non-code exclusion + vendor detection), and file size limits.
 2. **Language detection** (`language_detector.c`): maps file extensions to languages. Supports custom mappings via config.
-3. **Symbol extraction**: dispatches to universal-ctags (`ctags_resolver.c` / `ctags_stream.c`) or one of 14 custom parsers (`parser_*.c`) based on language.
+3. **Symbol extraction**: dispatches to universal-ctags (`ctags_resolver.c` / `ctags_stream.c`) or one of 15 custom parsers (`parser_*.c`) based on language.
 4. **Source analysis** (`source_analyzer.c`): extracts docstrings, signatures, byte offsets, and content hashes.
 5. **Summarization** (`summarizer.c`): generates one-line summaries from signatures and docstrings.
 6. **Storage** (`index_store.c`): inserts files, symbols, and imports into SQLite. FTS5 index is kept in sync via triggers.
@@ -78,10 +79,20 @@ Disable with `--full` flag, `"smart_filter": false` in config, or the `full` MCP
 
 TokToken stores all data outside the project directory. Nothing is written inside the user's codebase.
 
+### Base directory per OS
+
+| OS | Cache directory | Config file |
+| -- | --------------- | ----------- |
+| Linux | `$HOME/.cache/toktoken/` | `$HOME/.toktoken.json` |
+| macOS | `$HOME/.cache/toktoken/` | `$HOME/.toktoken.json` |
+| Windows | `%USERPROFILE%\.cache\toktoken\` | `%USERPROFILE%\.toktoken.json` |
+
+Home resolution: on Unix, `$HOME` env var; on Windows, `%USERPROFILE%` env var with `SHGetFolderPathW(CSIDL_PROFILE)` fallback.
+
 ### Directory layout
 
 ```text
-~/.cache/.toktoken/                    Base directory (dot-prefixed under .cache)
+~/.cache/toktoken/                    Base directory
     projects/                           One subdirectory per indexed project
         <hash>/                         12-char xxHash of canonical project path
             db.sqlite                   SQLite database (WAL mode)
@@ -89,9 +100,14 @@ TokToken stores all data outside the project directory. Nothing is written insid
             db.sqlite-shm              Shared memory file (auto-managed by SQLite)
     gh-repos/                           GitHub repos cloned via index:github
         <owner>/<repo>/                 Shallow clone of the repository
-    logs/                               Diagnostic logs (7-day auto-rotation)
+    logs/                               Diagnostic logs
+        mcp.jsonl                       MCP tool call + lifecycle log (append-only JSONL)
     UPSTREAM_VERSION                    Cached latest release version (12h refresh)
 ```
+
+### Cache directory migration
+
+Prior to v0.4.0, the cache directory was `~/.cache/.toktoken/`. On first access, `tt_storage_base_dir()` detects the old directory and atomically renames it to `~/.cache/toktoken/` via POSIX `rename()`. If the rename fails (another process is using the directory), the old path is used as fallback. The next invocation retries the migration.
 
 Configuration files (optional, not created by default):
 
@@ -115,7 +131,7 @@ This ensures each project gets a unique, stable index location regardless of sym
 - `index:create` creates the base directory hierarchy (if not present), opens the SQLite database in WAL mode, and populates it.
 - `index:update` compares on-disk file hashes against stored hashes. Only changed files are re-processed; deleted files are removed from the index.
 - `cache:clear` deletes the `db.sqlite` file and its WAL/SHM journals for a single project.
-- `cache:clear --all --force` removes all project subdirectories under `~/.cache/.toktoken/projects/`.
+- `cache:clear --all --force` removes all project subdirectories under `~/.cache/toktoken/projects/`.
 
 SQLite is opened with 6 PRAGMAs: `journal_mode=WAL` (concurrent reads), `foreign_keys=ON`, `synchronous=NORMAL`, `busy_timeout=5000`, `cache_size=-8000` (~8 MB page cache), and `mmap_size=268435456` (256 MB memory-mapped I/O).
 
@@ -282,7 +298,7 @@ TokToken includes a built-in update mechanism with zero HTTP library dependencie
 
 `tt_update_check()` is the hot-path version check used by `--version`, `--help`, and MCP responses:
 
-1. Reads `~/.cache/.toktoken/UPSTREAM_VERSION` and checks file mtime
+1. Reads `~/.cache/toktoken/UPSTREAM_VERSION` and checks file mtime
 2. If the cache is fresh (< 12 hours old): compares cached version against `TT_VERSION` using `tt_semver_compare()`
 3. If stale or missing: fetches `https://github.com/mauriziofonte/toktoken/releases/latest/download/VERSION` via `curl -fsSL --max-time 5`, writes to cache atomically (temp file + rename)
 4. On any failure (no curl, no network, timeout): returns `{NULL, false}` silently -- never blocks or errors

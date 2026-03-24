@@ -42,6 +42,7 @@
 #include "thread_pool.h"
 #include "schema.h"
 #include "parser_blade.h"
+#include "parser_razor.h"
 #include "parser_vue.h"
 #include "parser_ejs.h"
 #include "parser_nix.h"
@@ -55,6 +56,7 @@
 #include "parser_xml.h"
 #include "parser_autohotkey.h"
 #include "parser_openapi.h"
+#include "parser_twig.h"
 
 #include <yyjson.h>
 
@@ -1134,6 +1136,10 @@ static void merge_custom_parser(const char *project_root,
 
     if (flen > 10 && strcasecmp(rel_path + flen - 10, ".blade.php") == 0)
         rc = tt_parse_blade(project_root, paths, 1, &extra, &extra_count);
+    else if (flen > 7 && strcasecmp(rel_path + flen - 7, ".cshtml") == 0)
+        rc = tt_parse_razor(project_root, paths, 1, &extra, &extra_count);
+    else if (flen > 5 && strcasecmp(rel_path + flen - 5, ".twig") == 0)
+        rc = tt_parse_twig(project_root, paths, 1, &extra, &extra_count);
     else if (flen > 4 && strcasecmp(rel_path + flen - 4, ".vue") == 0)
         rc = tt_parse_vue(project_root, paths, 1, &extra, &extra_count);
     else if (flen > 4 && strcasecmp(rel_path + flen - 4, ".ejs") == 0)

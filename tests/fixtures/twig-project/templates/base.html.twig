@@ -1,0 +1,22 @@
+{# Base layout — Twig 2.x/3.x compatible #}
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{% block title %}Default Title{% endblock %}</title>
+</head>
+<body>
+    <div id="app-root">
+        <nav id="main-nav">
+            {% block navigation %}{% endblock %}
+        </nav>
+        <main id="content-area">
+            {% block content %}{% endblock %}
+        </main>
+        <footer id="page-footer">
+            {% block footer %}
+                {% include 'partials/footer.html.twig' %}
+            {% endblock %}
+        </footer>
+    </div>
+</body>
+</html>

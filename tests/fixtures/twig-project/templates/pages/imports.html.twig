@@ -1,0 +1,9 @@
+{% extends 'base.html.twig' %}
+{% import 'macros/forms.html.twig' as forms %}
+{% from 'macros/forms.html.twig' import input, textarea %}
+{% use 'blocks/common.html.twig' with sidebar as base_sidebar %}
+{% import _self as helpers %}
+
+{% block content %}
+    {{ forms.input('email', '', 'email') }}
+{% endblock %}

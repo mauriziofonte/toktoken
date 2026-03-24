@@ -1,0 +1,15 @@
+{%- macro input(name, value, type = "text") -%}
+    <input type="{{ type }}" name="{{ name }}" value="{{ value }}">
+{%- endmacro -%}
+
+{% macro textarea(name, value, rows = 5) %}
+    <textarea name="{{ name }}" rows="{{ rows }}">{{ value }}</textarea>
+{% endmacro textarea %}
+
+{% macro select(name, options, selected) %}
+    <select name="{{ name }}">
+        {% for key, label in options %}
+            <option value="{{ key }}">{{ label }}</option>
+        {% endfor %}
+    </select>
+{% endmacro %}

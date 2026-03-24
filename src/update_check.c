@@ -1,7 +1,7 @@
 /*
  * update_check.c -- Upstream version cache and update detection.
  *
- * Stores UPSTREAM_VERSION in ~/.cache/.toktoken/, refreshed via curl
+ * Stores UPSTREAM_VERSION in ~/.cache/toktoken/, refreshed via curl
  * at most once every 12 hours. Designed to be zero-cost on the hot path
  * and silently degrade when offline.
  */

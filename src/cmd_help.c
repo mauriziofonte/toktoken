@@ -21,7 +21,7 @@ static char *normalize_to_mcp(const char *name, char *buf, size_t len)
 {
     size_t i;
     for (i = 0; i < len && name[i]; i++)
-        buf[i] = (name[i] == ':') ? '_' : name[i];
+        buf[i] = (name[i] == ':' || name[i] == '-') ? '_' : name[i];
     buf[i] = '\0';
     return buf;
 }

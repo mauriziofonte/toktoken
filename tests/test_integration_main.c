@@ -10,6 +10,8 @@ extern void run_int_platform_tests(void);
 extern void run_int_storage_tests(void);
 extern void run_int_file_filter_tests(void);
 extern void run_int_parser_blade_tests(void);
+extern void run_int_parser_razor_tests(void);
+extern void run_int_parser_twig_tests(void);
 extern void run_int_parsers_tests(void);
 extern void run_int_parser_extra_tests(void);
 extern void run_int_index_store_tests(void);
@@ -45,6 +47,12 @@ int main(void)
 
     TT_SUITE("BladeParser (integration)");
     run_int_parser_blade_tests();
+
+    TT_SUITE("RazorParser (integration)");
+    run_int_parser_razor_tests();
+
+    TT_SUITE("TwigParser (integration)");
+    run_int_parser_twig_tests();
 
     TT_SUITE("Parsers (integration)");
     run_int_parsers_tests();

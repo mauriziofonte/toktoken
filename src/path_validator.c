@@ -14,6 +14,14 @@ bool tt_path_validate(const char *path, const char *root)
     if (!path || !root)
         return false;
 
+    /* Require both to exist.  POSIX realpath() enforces this implicitly
+     * (returns NULL for non-existent paths), but Windows GetFullPathNameW
+     * resolves even non-existent paths textually. */
+    if (!tt_file_exists(path) && !tt_is_dir(path))
+        return false;
+    if (!tt_is_dir(root))
+        return false;
+
     char *resolved_path = tt_realpath(path);
     char *resolved_root = tt_realpath(root);
 

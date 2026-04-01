@@ -60,8 +60,11 @@ char *tt_test_tmpdir(void)
 {
     /*
      * Cross-platform temp directory creation.
-     * Uses tt_getpid() + clock() for a unique suffix, then tt_mkdir_p().
+     * Uses pid + clock + monotonic counter for a unique suffix.
+     * The counter guarantees uniqueness even when clock() returns
+     * the same value for consecutive calls (low resolution on Windows).
      */
+    static int counter = 0;
     const char *base;
 #ifdef TT_PLATFORM_WINDOWS
     base = getenv("TEMP");
@@ -72,8 +75,8 @@ char *tt_test_tmpdir(void)
 #endif
 
     char path[512];
-    snprintf(path, sizeof(path), "%s/tt_test_%d_%lu",
-             base, tt_getpid(), (unsigned long)clock());
+    snprintf(path, sizeof(path), "%s/tt_test_%d_%lu_%d",
+             base, tt_getpid(), (unsigned long)clock(), counter++);
 
     if (tt_mkdir_p(path) != 0) return NULL;
     return strdup(path);

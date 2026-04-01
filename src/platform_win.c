@@ -128,12 +128,16 @@ const char *tt_path_extension(const char *path)
 
 const char *tt_home_dir(void)
 {
+    /* No static cache: match POSIX behaviour where getenv("HOME") is read
+     * each time. Tests override USERPROFILE and expect the change to take
+     * effect on subsequent calls. The static buffer keeps the returned
+     * pointer stable (safe from getenv/setenv invalidation). */
     static char home[MAX_PATH * 3] = "";
-    if (home[0]) return home;
 
     const char *env = getenv("USERPROFILE");
     if (env) {
         strncpy(home, env, sizeof(home) - 1);
+        home[sizeof(home) - 1] = '\0';
         tt_path_normalize_sep(home);
         return home;
     }
@@ -143,6 +147,7 @@ const char *tt_home_dir(void)
         char *utf8 = utf16_to_utf8(wpath);
         if (utf8) {
             strncpy(home, utf8, sizeof(home) - 1);
+            home[sizeof(home) - 1] = '\0';
             tt_path_normalize_sep(home);
             free(utf8);
             return home;
@@ -150,6 +155,7 @@ const char *tt_home_dir(void)
     }
 
     strncpy(home, "C:/", sizeof(home) - 1);
+    home[sizeof(home) - 1] = '\0';
     return home;
 }
 

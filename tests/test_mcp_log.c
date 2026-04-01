@@ -18,13 +18,17 @@
 /* ---- Helpers ---- */
 
 /*
- * Build the expected mcp.jsonl path under a tmpdir with HOME override.
+ * Derive the expected mcp.jsonl path from the production storage API.
+ * This avoids hardcoding platform-specific cache layouts and respects
+ * whatever HOME/USERPROFILE the test has set.
  */
-static char *mcp_log_path(const char *tmpdir)
+static char *mcp_log_path(void)
 {
-    char buf[512];
-    snprintf(buf, sizeof(buf), "%s/.cache/toktoken/logs/mcp.jsonl", tmpdir);
-    return strdup(buf);
+    char *logs_dir = tt_storage_logs_dir();
+    if (!logs_dir) return NULL;
+    char *path = tt_path_join(logs_dir, "mcp.jsonl");
+    free(logs_dir);
+    return path;
 }
 
 /*
@@ -118,7 +122,7 @@ TT_TEST(test_mcp_log_tool_call_creates_file)
     tt_mcp_log_tool_call("search_symbols", args, "/tmp/project", 42, true, NULL);
     cJSON_Delete(args);
 
-    char *path = mcp_log_path(tmpdir);
+    char *path = mcp_log_path();
     TT_ASSERT_TRUE(tt_file_exists(path));
 
     restore_home_env(orig_home);
@@ -141,7 +145,7 @@ TT_TEST(test_mcp_log_tool_call_format)
                          55, true, NULL);
     cJSON_Delete(args);
 
-    char *path = mcp_log_path(tmpdir);
+    char *path = mcp_log_path();
     char **lines = NULL;
     int count = read_jsonl_lines(path, &lines);
     TT_ASSERT_EQ_INT(1, count);
@@ -206,7 +210,7 @@ TT_TEST(test_mcp_log_tool_call_failure)
     tt_mcp_log_tool_call("index_create", NULL, "/tmp/proj",
                          150, false, "No ctags binary found");
 
-    char *path = mcp_log_path(tmpdir);
+    char *path = mcp_log_path();
     char **lines = NULL;
     int count = read_jsonl_lines(path, &lines);
     TT_ASSERT_EQ_INT(1, count);
@@ -249,7 +253,7 @@ TT_TEST(test_mcp_log_lifecycle_initialize)
     tt_mcp_log_lifecycle(TT_MCP_LOG_INITIALIZE, "/tmp/project",
                          "Claude Code 1.2.3");
 
-    char *path = mcp_log_path(tmpdir);
+    char *path = mcp_log_path();
     char **lines = NULL;
     int count = read_jsonl_lines(path, &lines);
     TT_ASSERT_EQ_INT(1, count);
@@ -293,7 +297,7 @@ TT_TEST(test_mcp_log_lifecycle_shutdown)
 
     tt_mcp_log_lifecycle(TT_MCP_LOG_SHUTDOWN, "/tmp/project", NULL);
 
-    char *path = mcp_log_path(tmpdir);
+    char *path = mcp_log_path();
     char **lines = NULL;
     int count = read_jsonl_lines(path, &lines);
     TT_ASSERT_EQ_INT(1, count);
@@ -335,7 +339,7 @@ TT_TEST(test_mcp_log_append_multiple)
     tt_mcp_log_tool_call("stats", NULL, "/tmp/p", 10, true, NULL);
     tt_mcp_log_lifecycle(TT_MCP_LOG_SHUTDOWN, "/tmp/p", NULL);
 
-    char *path = mcp_log_path(tmpdir);
+    char *path = mcp_log_path();
     char **lines = NULL;
     int count = read_jsonl_lines(path, &lines);
     TT_ASSERT_EQ_INT(3, count);

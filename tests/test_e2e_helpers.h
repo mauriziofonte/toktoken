@@ -5,11 +5,24 @@
 #ifndef TT_TEST_E2E_HELPERS_H
 #define TT_TEST_E2E_HELPERS_H
 
+#include "platform.h"
 #include <cJSON.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef TT_PLATFORM_WINDOWS
+#include <io.h>
+#define access _access
+#define popen  _popen
+#define pclose _pclose
+#ifndef X_OK
+#define X_OK 0 /* Windows: existence check only */
+#endif
+#else
 #include <unistd.h>
+#include <sys/wait.h>
+#endif
 
 /*
  * tt_e2e_run -- Run toktoken binary and capture stdout.
@@ -59,7 +72,11 @@ static inline int tt_e2e_run(const char *cmd_args, cJSON **out_json)
     }
 
     char cmd[2048];
+#ifdef TT_PLATFORM_WINDOWS
+    snprintf(cmd, sizeof(cmd), "%s %s 2>NUL", bin, cmd_args);
+#else
     snprintf(cmd, sizeof(cmd), "%s %s 2>/dev/null", bin, cmd_args);
+#endif
 
     FILE *p = popen(cmd, "r");
     if (!p) {
@@ -76,7 +93,11 @@ static inline int tt_e2e_run(const char *cmd_args, cJSON **out_json)
     buf[total] = '\0';
 
     int status = pclose(p);
+#ifdef TT_PLATFORM_WINDOWS
+    int exit_code = status; /* pclose returns exit code directly on Windows */
+#else
     int exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+#endif
 
     if (out_json) {
         *out_json = cJSON_Parse(buf);

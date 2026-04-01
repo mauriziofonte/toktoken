@@ -29,7 +29,8 @@ Both global and project config files use the same JSON format:
     "smart_filter": true,
     "extra_ignore_patterns": [],
     "languages": [],
-    "extra_extensions": {}
+    "extra_extensions": {},
+    "include_dirs": []
   },
   "logging": {
     "level": "info"
@@ -53,6 +54,7 @@ All fields are optional. Only specified fields override defaults.
 | `languages` | string[] | [] | Only index these languages (empty = all) |
 | `workers` | int | 0 | Number of parallel indexing workers. 0 = auto (CPU count, capped at 16) |
 | `smart_filter` | bool | true | Exclude non-code file types and vendored subdirectories |
+| `include_dirs` | string[] | [] | Directories to force-include even if in the skip list (e.g. `["vendor"]`). VCS dirs (`.git`, `.svn`, `.hg`) cannot be included. Persists across `index:update`. |
 | `extra_extensions` | object | {} | Map file extensions to language parsers |
 
 ### extra_ignore_patterns
@@ -109,6 +111,26 @@ To index everything:
 
 Or use the `--full` CLI flag: `toktoken index:create --full`
 
+### include_dirs
+
+Force-include specific directories that are normally skipped (e.g. `vendor`, `node_modules`). Unlike `--full`, this only un-skips the named directories — the smart filter still applies to file extensions inside them (e.g. CSS files inside `vendor/` remain excluded).
+
+VCS directories (`.git`, `.svn`, `.hg`) cannot be force-included.
+
+The `include_dirs` setting persists across `index:update` cycles via index metadata.
+
+```json
+{
+  "index": {
+    "include_dirs": ["vendor"]
+  }
+}
+```
+
+Or use the `--include` / `-I` CLI flag (repeatable): `toktoken index:create --include vendor`
+
+Or the MCP `include` parameter: `include: ["vendor"]`
+
 ### .toktokenignore
 
 TokToken supports a `.toktokenignore` file in the project root. This file uses the same gitignore-style syntax as `.gitignore` and is loaded alongside it during file discovery. Use it for TokToken-specific exclusions that should not affect your `.gitignore`.
@@ -160,6 +182,7 @@ Environment variables override all config file values.
 | `TOKTOKEN_EXTRA_IGNORE` | JSON array or comma-separated | Additional ignore patterns |
 | `TOKTOKEN_STALENESS_DAYS` | integer (min 1) | Staleness threshold in days |
 | `TOKTOKEN_EXTRA_EXTENSIONS` | "ext1:lang1,ext2:lang2" | Additional extension mappings |
+| `TOKTOKEN_INCLUDE_DIRS` | JSON array or comma-separated | Directories to force-include (e.g. `vendor,node_modules`) |
 
 ### Examples
 

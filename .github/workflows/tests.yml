@@ -82,6 +82,39 @@ jobs:
             --errors-for-leak-kinds=definite \
             --suppressions=cmake/valgrind.supp ./build-vg/test_integration
 
+  test-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-universal-ctags
+            make
+
+      - name: Configure (Debug)
+        run: cmake -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Unit tests
+        run: ./build/test_unit.exe
+
+      - name: Integration tests
+        run: ./build/test_integration.exe
+
+      - name: E2E tests
+        run: ./build/test_e2e.exe
+
   test-macos:
     runs-on: macos-latest
     steps:

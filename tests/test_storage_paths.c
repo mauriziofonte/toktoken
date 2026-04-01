@@ -10,7 +10,7 @@
 
 #include <stdlib.h>
 #include <string.h>
-#include <regex.h>
+#include "test_compat.h"
 
 TT_TEST(test_sp_base_dir_contains_toktoken)
 {

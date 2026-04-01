@@ -87,6 +87,17 @@ static void add_boolean_prop(cJSON *props, const char *name, const char *desc)
     cJSON_AddItemToObject(props, name, p);
 }
 
+static void add_string_array_prop(cJSON *props, const char *name, const char *desc)
+{
+    cJSON *p = cJSON_CreateObject();
+    cJSON_AddStringToObject(p, "type", "array");
+    cJSON *items = cJSON_CreateObject();
+    cJSON_AddStringToObject(items, "type", "string");
+    cJSON_AddItemToObject(p, "items", items);
+    cJSON_AddStringToObject(p, "description", desc);
+    cJSON_AddItemToObject(props, name, p);
+}
+
 static cJSON *make_schema_with_path_only(void)
 {
     cJSON *s = cJSON_CreateObject();
@@ -124,6 +135,10 @@ static cJSON *schema_index_create(void)
     add_string_prop(props, "path", "Project root path (default: cwd)");
     add_boolean_prop(props, "full",
                      "Disable smart filter: index all file types and vendored subdirectories");
+    add_string_array_prop(props, "include",
+                          "Directories to force-include even if normally skipped "
+                          "(e.g. [\"vendor\"] to index PHP dependencies). "
+                          "VCS dirs (.git, .svn, .hg) cannot be included.");
     cJSON_AddItemToObject(s, "properties", props);
     return s;
 }
@@ -135,6 +150,10 @@ static cJSON *schema_index_update(void)
     add_string_prop(props, "path", "Project root path (default: cwd)");
     add_boolean_prop(props, "full",
                      "Disable smart filter: index all file types and vendored subdirectories");
+    add_string_array_prop(props, "include",
+                          "Directories to force-include even if normally skipped "
+                          "(e.g. [\"vendor\"] to index PHP dependencies). "
+                          "VCS dirs (.git, .svn, .hg) cannot be included.");
     cJSON_AddItemToObject(s, "properties", props);
     return s;
 }
@@ -338,6 +357,40 @@ static cJSON *execute_codebase_detect(struct tt_mcp_server_t *srv,
     return result;
 }
 
+/* Extract "include" JSON array into opts->include_patterns.
+ * Strings are borrowed from cJSON (valid while arguments is alive).
+ * Caller must free(opts->include_patterns) after use. */
+static void extract_include_param(tt_cli_opts_t *opts, const cJSON *arguments)
+{
+    if (!arguments)
+        return;
+    const cJSON *arr = cJSON_GetObjectItemCaseSensitive(arguments, "include");
+    if (!cJSON_IsArray(arr))
+        return;
+    int n = cJSON_GetArraySize(arr);
+    if (n <= 0)
+        return;
+    const char **patterns = calloc((size_t)n, sizeof(const char *));
+    if (!patterns)
+        return;
+    int count = 0;
+    const cJSON *el;
+    cJSON_ArrayForEach(el, arr)
+    {
+        if (cJSON_IsString(el) && el->valuestring[0])
+            patterns[count++] = el->valuestring;
+    }
+    if (count > 0)
+    {
+        opts->include_patterns = patterns;
+        opts->include_count = count;
+    }
+    else
+    {
+        free(patterns);
+    }
+}
+
 static cJSON *execute_index_create(struct tt_mcp_server_t *srv,
                                    const cJSON *arguments)
 {
@@ -351,6 +404,9 @@ static cJSON *execute_index_create(struct tt_mcp_server_t *srv,
         if (cJSON_IsTrue(full_item))
             opts.full = true;
     }
+
+    /* Extract include parameter */
+    extract_include_param(&opts, arguments);
 
     /* Wire progress callback if client sent a progressToken */
     if (srv->progress_token)
@@ -368,6 +424,7 @@ static cJSON *execute_index_create(struct tt_mcp_server_t *srv,
     }
 
     cJSON *result = tt_cmd_index_create_exec(&opts);
+    free((void *)opts.include_patterns);
     if (!result)
         return mcp_tool_error(tt_error_get());
     return result;
@@ -387,6 +444,9 @@ static cJSON *execute_index_update(struct tt_mcp_server_t *srv,
             opts.full = true;
     }
 
+    /* Extract include parameter */
+    extract_include_param(&opts, arguments);
+
     /* Wire progress callback if client sent a progressToken */
     if (srv->progress_token)
     {
@@ -403,6 +463,7 @@ static cJSON *execute_index_update(struct tt_mcp_server_t *srv,
     }
 
     cJSON *result = tt_cmd_index_update_exec(&opts);
+    free((void *)opts.include_patterns);
     if (!result)
         return mcp_tool_error(tt_error_get());
     return result;
@@ -1398,12 +1459,16 @@ const tt_mcp_tool_t TT_MCP_TOOLS[] = {
      "Create a full symbol index from scratch. Required before any search or inspect tool can work. "
      "By default, the smart filter excludes non-code files (CSS, HTML, SVG, XML, YAML, TOML, GraphQL) "
      "and vendored subdirectories. Pass full=true to include all file types -- do this when the user's "
-     "task involves excluded file types, or when a search returns 0 results on filtered extensions.",
+     "task involves excluded file types, or when a search returns 0 results on filtered extensions. "
+     "Pass include=[\"vendor\"] to selectively include normally-skipped directories without disabling "
+     "the entire smart filter (e.g. to index PHP dependencies in Symfony/Laravel projects).",
      schema_index_create,
      execute_index_create},
     {"index_update",
      "Incrementally update the index. Only re-processes files with changed content hashes -- faster than index_create. "
-     "Pass full=true to include all file types (same smart filter override as index_create).",
+     "Pass full=true to include all file types (same smart filter override as index_create). "
+     "Pass include=[\"vendor\"] to selectively include normally-skipped directories. "
+     "Include dirs from the original index_create are automatically inherited.",
      schema_index_update,
      execute_index_update},
     {"search_symbols",

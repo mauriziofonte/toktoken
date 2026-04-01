@@ -41,7 +41,7 @@ TT_TEST(test_edge_binary_file_excluded)
                         "<?php echo 'hello';");
 
     tt_file_filter_t ff;
-    tt_file_filter_init(&ff, 0, NULL, false);
+    tt_file_filter_init(&ff, 0, NULL, false, NULL);
     tt_discovered_paths_t dp = {0};
     tt_discover_paths(tmpdir, &ff, &dp);
 
@@ -56,6 +56,7 @@ TT_TEST(test_edge_binary_file_excluded)
 
 /* --- Unreadable file does not crash indexing --- */
 
+#ifndef TT_PLATFORM_WINDOWS
 TT_TEST(test_edge_unreadable_file_skipped)
 {
     if (getuid() == 0) return; /* Skip if root */
@@ -74,7 +75,7 @@ TT_TEST(test_edge_unreadable_file_skipped)
     chmod(path, 0000);
 
     tt_file_filter_t ff;
-    tt_file_filter_init(&ff, 0, NULL, false);
+    tt_file_filter_init(&ff, 0, NULL, false, NULL);
     tt_discovered_paths_t dp = {0};
     int rc = tt_discover_paths(tmpdir, &ff, &dp);
 
@@ -89,6 +90,7 @@ TT_TEST(test_edge_unreadable_file_skipped)
     tt_test_rmdir(tmpdir);
     free(tmpdir);
 }
+#endif /* !TT_PLATFORM_WINDOWS */
 
 /* --- Long path handling --- */
 
@@ -104,7 +106,7 @@ TT_TEST(test_edge_long_path_no_crash)
     tt_test_write_file(tmpdir, nested, "<?php class Deep {}");
 
     tt_file_filter_t ff;
-    tt_file_filter_init(&ff, 0, NULL, false);
+    tt_file_filter_init(&ff, 0, NULL, false, NULL);
     tt_discovered_paths_t dp = {0};
     int rc = tt_discover_paths(tmpdir, &ff, &dp);
 
@@ -127,7 +129,7 @@ TT_TEST(test_edge_empty_file_no_crash)
     tt_test_write_file(tmpdir, "empty.php", "");
 
     tt_file_filter_t ff;
-    tt_file_filter_init(&ff, 0, NULL, false);
+    tt_file_filter_init(&ff, 0, NULL, false, NULL);
     tt_discovered_paths_t dp = {0};
     int rc = tt_discover_paths(tmpdir, &ff, &dp);
 
@@ -153,7 +155,7 @@ TT_TEST(test_edge_non_utf8_filename_no_crash)
     tt_test_write_file(tmpdir, badname, "<?php class Bad {}");
 
     tt_file_filter_t ff;
-    tt_file_filter_init(&ff, 0, NULL, false);
+    tt_file_filter_init(&ff, 0, NULL, false, NULL);
     tt_discovered_paths_t dp = {0};
     int rc = tt_discover_paths(tmpdir, &ff, &dp);
 
@@ -180,7 +182,7 @@ TT_TEST(test_edge_image_file_excluded)
                         "function app() {}");
 
     tt_file_filter_t ff;
-    tt_file_filter_init(&ff, 0, NULL, false);
+    tt_file_filter_init(&ff, 0, NULL, false, NULL);
     tt_discovered_paths_t dp = {0};
     tt_discover_paths(tmpdir, &ff, &dp);
 
@@ -240,7 +242,9 @@ TT_TEST(test_regex_validate_empty)
 void run_edge_case_tests(void)
 {
     TT_RUN(test_edge_binary_file_excluded);
+#ifndef TT_PLATFORM_WINDOWS
     TT_RUN(test_edge_unreadable_file_skipped);
+#endif
     TT_RUN(test_edge_long_path_no_crash);
     TT_RUN(test_edge_empty_file_no_crash);
     TT_RUN(test_edge_non_utf8_filename_no_crash);

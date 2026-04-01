@@ -3,6 +3,7 @@
  */
 
 #include "test_framework.h"
+#include "platform.h"
 
 TT_TEST_MAIN_VARS;
 
@@ -18,10 +19,12 @@ extern void run_int_index_store_tests(void);
 extern void run_int_search_tests(void);
 extern void run_int_commands_tests(void);
 extern void run_int_manage_tests(void);
+#ifndef TT_PLATFORM_WINDOWS
 extern void run_int_mcp_server_tests(void);
+extern void run_int_proc_io_tests(void);
+#endif
 extern void run_int_github_tests(void);
 extern void run_int_savings_tests(void);
-extern void run_int_proc_io_tests(void);
 extern void run_int_wildmatch_tests(void);
 extern void run_int_change_detect_tests(void);
 extern void run_int_mtime_tests(void);
@@ -36,8 +39,10 @@ int main(void)
     TT_SUITE("Platform (integration)");
     run_int_platform_tests();
 
+#ifndef TT_PLATFORM_WINDOWS
     TT_SUITE("Process I/O & Signal Handling (integration)");
     run_int_proc_io_tests();
+#endif
 
     TT_SUITE("Storage (integration)");
     run_int_storage_tests();
@@ -72,8 +77,10 @@ int main(void)
     TT_SUITE("Manage (integration)");
     run_int_manage_tests();
 
+#ifndef TT_PLATFORM_WINDOWS
     TT_SUITE("MCPServer (integration)");
     run_int_mcp_server_tests();
+#endif
 
     TT_SUITE("GitHub (integration)");
     run_int_github_tests();

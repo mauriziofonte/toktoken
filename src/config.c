@@ -78,6 +78,38 @@ static void clear_extra_ignore(tt_config_t *config)
     config->extra_ignore_count = 0;
 }
 
+/* Add a directory to the include_dirs list if not already present */
+static void add_include_dir(tt_config_t *config, const char *dir)
+{
+    if (!dir || !dir[0])
+        return;
+
+    /* Dedup */
+    for (int i = 0; i < config->include_dir_count; i++)
+    {
+        if (strcmp(config->include_dirs[i], dir) == 0)
+            return;
+    }
+
+    char **new_arr = realloc(config->include_dirs,
+                             (size_t)(config->include_dir_count + 1) * sizeof(char *));
+    if (!new_arr)
+        return;
+    config->include_dirs = new_arr;
+    config->include_dirs[config->include_dir_count] = tt_strdup(dir);
+    config->include_dir_count++;
+}
+
+/* Free and reset the include_dirs list */
+static void clear_include_dirs(tt_config_t *config)
+{
+    for (int i = 0; i < config->include_dir_count; i++)
+        free(config->include_dirs[i]);
+    free(config->include_dirs);
+    config->include_dirs = NULL;
+    config->include_dir_count = 0;
+}
+
 /* Add an extension->language mapping to extra_extensions */
 static void add_extra_extension(tt_config_t *config, const char *ext, const char *lang)
 {
@@ -173,6 +205,18 @@ static void merge_index_section(tt_config_t *config, const cJSON *index_obj)
         {
             if (cJSON_IsString(el) && el->valuestring[0])
                 add_language(config, el->valuestring);
+        }
+    }
+
+    item = cJSON_GetObjectItemCaseSensitive(index_obj, "include_dirs");
+    if (cJSON_IsArray(item))
+    {
+        clear_include_dirs(config);
+        const cJSON *el;
+        cJSON_ArrayForEach(el, item)
+        {
+            if (cJSON_IsString(el) && el->valuestring[0])
+                add_include_dir(config, el->valuestring);
         }
     }
 
@@ -307,6 +351,39 @@ static void apply_env_overrides(tt_config_t *config)
         config->staleness_days = val;
     }
 
+    /* TOKTOKEN_INCLUDE_DIRS: JSON array or comma-separated */
+    const char *include = getenv("TOKTOKEN_INCLUDE_DIRS");
+    if (include && include[0])
+    {
+        cJSON *arr = cJSON_Parse(include);
+        if (arr && cJSON_IsArray(arr))
+        {
+            const cJSON *el;
+            cJSON_ArrayForEach(el, arr)
+            {
+                if (cJSON_IsString(el) && el->valuestring[0])
+                    add_include_dir(config, el->valuestring);
+            }
+            cJSON_Delete(arr);
+        }
+        else
+        {
+            cJSON_Delete(arr);
+            int count = 0;
+            char **parts = tt_str_split(include, ',', &count);
+            if (parts)
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    char *trimmed = tt_str_trim(parts[i]);
+                    if (trimmed && trimmed[0])
+                        add_include_dir(config, trimmed);
+                }
+                tt_str_split_free(parts);
+            }
+        }
+    }
+
     /* TOKTOKEN_EXTRA_EXTENSIONS: "ext1:lang1,ext2:lang2" */
     const char *extra_ext = getenv("TOKTOKEN_EXTRA_EXTENSIONS");
     if (extra_ext && extra_ext[0])
@@ -381,6 +458,7 @@ void tt_config_free(tt_config_t *config)
     clear_extra_ignore(config);
     clear_languages(config);
     clear_extra_extensions(config);
+    clear_include_dirs(config);
     free(config->log_level);
     config->log_level = NULL;
 }

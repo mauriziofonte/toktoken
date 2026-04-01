@@ -5,12 +5,15 @@
 #include "test_framework.h"
 #include "test_helpers.h"
 #include "path_validator.h"
+#include "platform.h"
 
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include <unistd.h>
 #include <sys/stat.h>
+#ifndef TT_PLATFORM_WINDOWS
+#include <unistd.h>
+#endif
 
 TT_TEST(test_pv_validate_same_directory)
 {
@@ -50,7 +53,7 @@ TT_TEST(test_pv_validate_subdirectory)
 
     char subdir[512];
     snprintf(subdir, sizeof(subdir), "%s/sub", tmpdir);
-    mkdir(subdir, 0755);
+    tt_mkdir_p(subdir);
 
     TT_ASSERT_TRUE(tt_path_validate(subdir, "/tmp"));
 
@@ -98,6 +101,7 @@ TT_TEST(test_pv_symlink_escape_nonexistent)
     TT_ASSERT_FALSE(tt_is_symlink_escape("/nonexistent_xyz", "/tmp"));
 }
 
+#ifndef TT_PLATFORM_WINDOWS
 TT_TEST(test_pv_symlink_inside_root)
 {
     char *tmpdir = tt_test_tmpdir();
@@ -151,6 +155,7 @@ TT_TEST(test_pv_symlink_outside_root)
     free(tmpdir);
     free(otherdir);
 }
+#endif /* !TT_PLATFORM_WINDOWS */
 
 void run_path_validator_tests(void)
 {
@@ -166,6 +171,8 @@ void run_path_validator_tests(void)
     TT_RUN(test_pv_validate_null_root);
     TT_RUN(test_pv_symlink_escape_regular_file);
     TT_RUN(test_pv_symlink_escape_nonexistent);
+#ifndef TT_PLATFORM_WINDOWS
     TT_RUN(test_pv_symlink_inside_root);
     TT_RUN(test_pv_symlink_outside_root);
+#endif
 }

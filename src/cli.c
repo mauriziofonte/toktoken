@@ -23,8 +23,9 @@ typedef enum
     FLAG_BOOL,
     FLAG_VALUE_STR,
     FLAG_VALUE_INT,
-    FLAG_VALUE_INT_CLAMP, /* int with min value */
-    FLAG_REPEATABLE,      /* repeatable --ignore pattern */
+    FLAG_VALUE_INT_CLAMP,      /* int with min value */
+    FLAG_REPEATABLE,           /* repeatable --ignore pattern */
+    FLAG_REPEATABLE_INCLUDE,   /* repeatable --include pattern */
 } flag_type_t;
 
 typedef struct
@@ -46,6 +47,8 @@ typedef struct
     { s, l, FLAG_VALUE_INT_CLAMP, offsetof(tt_cli_opts_t, field), min }
 #define REPEAT_FLAG(s, l) \
     { s, l, FLAG_REPEATABLE, 0, 0 }
+#define REPEAT_INCLUDE_FLAG(s, l) \
+    { s, l, FLAG_REPEATABLE_INCLUDE, 0, 0 }
 
 static const flag_def_t flag_table[] = {
     /* Boolean flags */
@@ -103,6 +106,7 @@ static const flag_def_t flag_table[] = {
 
     /* Repeatable */
     REPEAT_FLAG('i', "ignore"),
+    REPEAT_INCLUDE_FLAG('I', "include"),
 
     /* sentinel */
     { 0, NULL, FLAG_BOOL, 0, 0 }
@@ -163,26 +167,40 @@ static void apply_bool(tt_cli_opts_t *opts, const flag_def_t *def)
     *(bool *)((char *)opts + def->offset) = true;
 }
 
+/* Append a value to a repeatable array (ignore or include). */
+static void append_repeatable(const char ***arr, int *arr_count, int *arr_cap,
+                              const char *value)
+{
+    if (*arr_count >= *arr_cap)
+    {
+        int new_cap = *arr_cap ? *arr_cap * 2 : 8;
+        const char **tmp = realloc(*arr, (size_t)new_cap * sizeof(const char *));
+        if (!tmp) return;
+        *arr = tmp;
+        *arr_cap = new_cap;
+    }
+    (*arr)[(*arr_count)++] = value;
+}
+
 /* Apply a value flag (string or int) to opts. Returns 0 on success, -1 on error. */
 static int apply_value(tt_cli_opts_t *opts, const flag_def_t *def,
                        int *i, int argc, char *argv[],
-                       const char ***ign, int *ign_cap)
+                       const char ***ign, int *ign_cap,
+                       const char ***incl, int *incl_cap)
 {
     if (def->type == FLAG_REPEATABLE)
     {
         const char *v = consume_value(i, argc, argv);
         if (v)
-        {
-            if (opts->ignore_count >= *ign_cap)
-            {
-                int new_cap = *ign_cap ? *ign_cap * 2 : 8;
-                const char **tmp = realloc(*ign, (size_t)new_cap * sizeof(const char *));
-                if (!tmp) return 0;
-                *ign = tmp;
-                *ign_cap = new_cap;
-            }
-            (*ign)[opts->ignore_count++] = v;
-        }
+            append_repeatable(ign, &opts->ignore_count, ign_cap, v);
+        return 0;
+    }
+
+    if (def->type == FLAG_REPEATABLE_INCLUDE)
+    {
+        const char *v = consume_value(i, argc, argv);
+        if (v)
+            append_repeatable(incl, &opts->include_count, incl_cap, v);
         return 0;
     }
 
@@ -216,11 +234,13 @@ int tt_cli_parse(tt_cli_opts_t *opts, int argc, char *argv[])
     memset(opts, 0, sizeof(*opts));
     opts->truncate_width = 120;
 
-    /* Temporary storage for positional args and ignore patterns */
+    /* Temporary storage for positional args, ignore and include patterns */
     const char **pos = NULL;
     int pos_cap = 0;
     const char **ign = NULL;
     int ign_cap = 0;
+    const char **incl = NULL;
+    int incl_cap = 0;
 
     /* Skip argv[0] (program) and argv[1] (command) */
     int start = 2;
@@ -241,13 +261,14 @@ int tt_cli_parse(tt_cli_opts_t *opts, int argc, char *argv[])
                 fprintf(stderr, "Unknown option: %s\n", arg);
                 free(pos);
                 free(ign);
+                free(incl);
                 return -1;
             }
 
             if (def->type == FLAG_BOOL)
                 apply_bool(opts, def);
             else
-                apply_value(opts, def, &i, argc, argv, &ign, &ign_cap);
+                apply_value(opts, def, &i, argc, argv, &ign, &ign_cap, &incl, &incl_cap);
 
             continue;
         }
@@ -265,6 +286,7 @@ int tt_cli_parse(tt_cli_opts_t *opts, int argc, char *argv[])
                     fprintf(stderr, "Unknown option: -%c\n", *p);
                     free(pos);
                     free(ign);
+                    free(incl);
                     return -1;
                 }
 
@@ -297,20 +319,17 @@ int tt_cli_parse(tt_cli_opts_t *opts, int argc, char *argv[])
                         }
                         else if (def->type == FLAG_REPEATABLE)
                         {
-                            if (opts->ignore_count >= ign_cap)
-                            {
-                                int new_cap = ign_cap ? ign_cap * 2 : 8;
-                                const char **tmp = realloc(ign, (size_t)new_cap * sizeof(const char *));
-                                if (tmp) { ign = tmp; ign_cap = new_cap; }
-                            }
-                            if (opts->ignore_count < ign_cap)
-                                ign[opts->ignore_count++] = p;
+                            append_repeatable(&ign, &opts->ignore_count, &ign_cap, p);
+                        }
+                        else if (def->type == FLAG_REPEATABLE_INCLUDE)
+                        {
+                            append_repeatable(&incl, &opts->include_count, &incl_cap, p);
                         }
                     }
                     else
                     {
                         /* -l VALUE: consume next argv */
-                        apply_value(opts, def, &i, argc, argv, &ign, &ign_cap);
+                        apply_value(opts, def, &i, argc, argv, &ign, &ign_cap, &incl, &incl_cap);
                     }
                     break; /* value flag ends aggregation */
                 }
@@ -330,6 +349,7 @@ int tt_cli_parse(tt_cli_opts_t *opts, int argc, char *argv[])
 
     opts->positional = pos;
     opts->ignore_patterns = ign;
+    opts->include_patterns = incl;
     return 0;
 }
 
@@ -337,6 +357,7 @@ void tt_cli_opts_free(tt_cli_opts_t *opts)
 {
     free((void *)opts->positional);
     free((void *)opts->ignore_patterns);
+    free((void *)opts->include_patterns);
     memset(opts, 0, sizeof(*opts));
 }
 

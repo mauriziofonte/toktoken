@@ -226,8 +226,12 @@ static int free_rules_cb(const char *key, void *value, void *userdata)
 
 /* ===== File filter init/free ===== */
 
+/* VCS directories that can never be force-included */
+static const char *NEVER_INCLUDE[] = {".git", ".svn", ".hg", NULL};
+
 int tt_file_filter_init(tt_file_filter_t *ff, int max_file_size_kb,
-                        const char **extra_ignore, bool smart_filter)
+                        const char **extra_ignore, bool smart_filter,
+                        const char **include_dirs)
 {
     if (!ff)
         return -1;
@@ -248,6 +252,36 @@ int tt_file_filter_init(tt_file_filter_t *ff, int max_file_size_kb,
     ff->extra_ignore = extra_ignore;
     ff->smart_filter = smart_filter;
     ff->workspace_dirs = NULL; /* populated later by tt_discover_paths */
+    ff->include_dirs = NULL;
+
+    /* Apply include_dirs: remove from skip_dirs so they pass the A1 check */
+    if (include_dirs)
+    {
+        ff->include_dirs = tt_hashmap_new(8);
+        if (!ff->include_dirs)
+        {
+            tt_file_filter_free(ff);
+            return -1;
+        }
+        for (const char **p = include_dirs; *p; p++)
+        {
+            /* Block VCS directories */
+            bool blocked = false;
+            for (const char **nv = NEVER_INCLUDE; *nv; nv++)
+            {
+                if (strcmp(*p, *nv) == 0)
+                {
+                    blocked = true;
+                    break;
+                }
+            }
+            if (blocked)
+                continue;
+
+            tt_hashmap_set(ff->include_dirs, *p, (void *)1);
+            tt_hashmap_remove(ff->skip_dirs, *p);
+        }
+    }
 
     /* Remove nocode extensions when smart filter is active */
     if (smart_filter)
@@ -291,6 +325,11 @@ void tt_file_filter_free(tt_file_filter_t *ff)
     {
         tt_hashmap_free(ff->workspace_dirs);
         ff->workspace_dirs = NULL;
+    }
+    if (ff->include_dirs)
+    {
+        tt_hashmap_free(ff->include_dirs);
+        ff->include_dirs = NULL;
     }
 }
 
@@ -627,6 +666,10 @@ static bool has_skip_dir_segment(const tt_file_filter_t *ff, const char *rel_pat
     /* Check each SKIP_DIRS against the path segments */
     for (const char **sd = SKIP_DIRS; *sd; sd++)
     {
+        /* Skip directories that have been force-included */
+        if (ff->include_dirs && tt_hashmap_has(ff->include_dirs, *sd))
+            continue;
+
         size_t dlen = strlen(*sd);
 
         /* starts_with(relPath, dir + "/") */

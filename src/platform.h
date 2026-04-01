@@ -241,6 +241,51 @@ bool tt_fnmatch(const char *pattern, const char *string, bool case_insensitive);
  */
 bool tt_fnmatch_ex(const char *pattern, const char *string, int flags);
 
+/* === Thread abstraction === */
+
+/*
+ * Lightweight thread abstraction for the indexing pipeline.
+ * Thread function takes void* and returns nothing.
+ */
+typedef void (*tt_thread_fn)(void *arg);
+
+#ifdef TT_PLATFORM_WINDOWS
+typedef void *tt_thread_t; /* HANDLE */
+#else
+#include <pthread.h>
+typedef pthread_t tt_thread_t;
+#endif
+
+/*
+ * tt_thread_create -- Start a new thread.
+ *
+ * Returns 0 on success, -1 on error.
+ */
+int tt_thread_create(tt_thread_t *thread, tt_thread_fn fn, void *arg);
+
+/*
+ * tt_thread_join -- Wait for thread to finish and release resources.
+ *
+ * Returns 0 on success, -1 on error.
+ */
+int tt_thread_join(tt_thread_t thread);
+
+/*
+ * tt_tmpfile_write -- Create a temp file with the given content.
+ *
+ * prefix: a prefix string for the temp file name.
+ * data:   content to write.
+ * len:    content length.
+ *
+ * [caller-frees] Returns the temp file path, or NULL on error.
+ */
+char *tt_tmpfile_write(const char *prefix, const char *data, size_t len);
+
+/*
+ * tt_getpid -- Get current process ID.
+ */
+int tt_getpid(void);
+
 /* === Self-update support === */
 
 /*

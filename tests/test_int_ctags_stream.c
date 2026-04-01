@@ -22,24 +22,12 @@ static const char *ctags_path(void)
     static char resolved[512];
     for (int i = 0; names[i]; i++)
     {
-        char cmd[256];
-        snprintf(cmd, sizeof(cmd), "which %s 2>/dev/null", names[i]);
-        FILE *p = popen(cmd, "r");
-        if (p)
+        char *path = tt_which(names[i]);
+        if (path)
         {
-            if (fgets(resolved, sizeof(resolved), p))
-            {
-                pclose(p);
-                char *nl = strchr(resolved, '\n');
-                if (nl)
-                    *nl = '\0';
-                if (resolved[0])
-                    return resolved;
-            }
-            else
-            {
-                pclose(p);
-            }
+            snprintf(resolved, sizeof(resolved), "%s", path);
+            free(path);
+            return resolved;
         }
     }
     return NULL;

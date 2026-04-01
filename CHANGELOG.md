@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Go stdlib import skip**: single-word Go imports without `/` or `.` (e.g., `fmt`, `context`, `errors`) are skipped during resolution, eliminating false edges in Go projects.
 - **MCP backslash normalization**: PHP namespace symbol IDs (e.g., `App\Models\Event`) are double-escaped by JSON transport. Added normalization to collapse `\\` to `\` in all MCP executors that accept symbol IDs (`inspect:symbol`, `inspect:bundle`, `find:callers`, `search:similar`, `inspect:blast-radius`).
 
+### Added
+
+- **`--include` / `-I` flag**: force-include normally-skipped directories during indexing (e.g. `--include vendor` to index PHP dependencies in Symfony/Laravel projects). Also available as `include` MCP parameter and `include_dirs` in `.toktoken.json`. VCS directories (`.git`, `.svn`, `.hg`) are blocked. The override persists across `index:update` cycles. Unlike `--full`, the smart filter still applies to file extensions inside the included directory.
+- **Windows indexing support**: full parallel indexing pipeline now works on Windows. Implemented `ctags_stream_win.c` with `CreateProcessW`, anonymous pipes, and a dedicated stderr drainer thread. Made `index_pipeline.c` cross-platform by replacing pthreads with platform abstractions (`tt_thread_create/join`, `tt_tmpfile_write`, `tt_sleep_ms`). Added Windows CI job (MSYS2/MinGW64) to both test and release workflows. Test helpers (`test_helpers.c`, `test_compat.h`, `test_e2e_helpers.h`) made cross-platform with portability shims for `setenv`/`unsetenv`, `symlink` guards, and `popen`/`pclose` wrappers.
+
 ### Changed
 
 - **Default outline kind filter**: `inspect:outline` now excludes `variable` and `constant` kinds by default, showing only structural symbols (classes, functions, methods, etc.). Use `--kind '*'` for all kinds.

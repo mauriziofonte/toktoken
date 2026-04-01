@@ -102,6 +102,7 @@ static void print_usage(void)
             "Indexing options:\n"
             "  -m, --max-files <n>    Max files to index (default: 200000)\n"
             "  -f, --full             Disable smart filter, index all file types\n"
+            "  -I, --include <dir>    Force-include a skipped directory (repeatable)\n"
             "  -i, --ignore <pattern> Extra ignore pattern (repeatable)\n"
             "      --languages <list> Comma-separated language filter\n"
             "  -X, --diagnostic       Emit JSONL diagnostics to stderr\n"

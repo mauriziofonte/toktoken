@@ -13,8 +13,11 @@ option(TT_STATIC "Build fully static binary" OFF)
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     add_compile_options(-Wall -Wextra -Wpedantic -Wno-unused-parameter)
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-        add_compile_options(-g -O0 -fsanitize=address -fsanitize=undefined)
-        add_link_options(-fsanitize=address -fsanitize=undefined)
+        add_compile_options(-g -O0)
+        if(NOT MINGW)
+            add_compile_options(-fsanitize=address -fsanitize=undefined)
+            add_link_options(-fsanitize=address -fsanitize=undefined)
+        endif()
     else()
         add_compile_options(-O2 -fstack-protector-strong)
     endif()
@@ -167,8 +170,7 @@ if(BUILD_TESTS)
     add_test(NAME test_unit COMMAND test_unit WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
     # Integration tests (consolidated)
-    add_executable(test_integration
-        tests/test_int_proc_io.c
+    set(TEST_INT_SOURCES
         tests/test_int_platform.c
         tests/test_int_storage.c
         tests/test_int_file_filter.c
@@ -181,7 +183,6 @@ if(BUILD_TESTS)
         tests/test_int_search.c
         tests/test_int_commands.c
         tests/test_int_manage.c
-        tests/test_int_mcp_server.c
         tests/test_int_github.c
         tests/test_int_savings.c
         tests/test_int_wildmatch.c
@@ -195,6 +196,11 @@ if(BUILD_TESTS)
         tests/test_helpers.c
         tests/test_integration_main.c
     )
+    # POSIX-only test files (fork, waitpid, kill, dd, /dev/zero, signal traps)
+    if(NOT MINGW)
+        list(APPEND TEST_INT_SOURCES tests/test_int_proc_io.c tests/test_int_mcp_server.c)
+    endif()
+    add_executable(test_integration ${TEST_INT_SOURCES})
     target_include_directories(test_integration PRIVATE tests)
     target_link_libraries(test_integration PRIVATE toktoken_core)
     add_test(NAME test_integration COMMAND test_integration WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})

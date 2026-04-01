@@ -37,6 +37,20 @@ cmake -DCMAKE_BUILD_TYPE=Release -DTT_STATIC=ON ..
 cmake --build . -j$(nproc)
 ```
 
+### Windows (MSYS2/MinGW64)
+
+Install [MSYS2](https://www.msys2.org/), then from a **MinGW64** shell:
+
+```bash
+pacman -S mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-universal-ctags make
+
+mkdir -p build && cd build
+cmake -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Debug ..
+cmake --build . -j$(nproc)
+```
+
+Note: ASan/UBSan are not available on MinGW builds. Debug builds compile with `-g -O0` only. Some POSIX-only tests (process I/O, MCP server subprocess handling) are excluded from the Windows build.
+
 ## Running Tests
 
 ### All tests via CTest
@@ -112,6 +126,7 @@ docs: update MCP tool count in README
 - Fill out the PR template completely
 - Ensure all tests pass before submitting
 - If you add a new MCP tool, update both CLI and MCP registration plus all related documentation (see PR template checklist)
+- If you add a new CLI flag, update help text in `src/main.c`, options table in `README.md`, and `docs/CONFIGURATION.md` if the flag has a config equivalent
 
 ## Code Structure
 

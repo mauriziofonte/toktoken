@@ -1074,6 +1074,33 @@ TT_TEST(test_cli_short_value_at_end_no_value)
     tt_cli_opts_free(&opts);
 }
 
+TT_TEST(test_cli_include_flag)
+{
+    /* --include vendor -I node_modules */
+    tt_cli_opts_t opts;
+    int rc;
+    PARSE("--include", "vendor", "-I", "node_modules");
+    TT_ASSERT_EQ_INT(0, rc);
+    TT_ASSERT_EQ_INT(2, opts.include_count);
+    TT_ASSERT_EQ_STR("vendor", opts.include_patterns[0]);
+    TT_ASSERT_EQ_STR("node_modules", opts.include_patterns[1]);
+    tt_cli_opts_free(&opts);
+}
+
+TT_TEST(test_cli_include_with_ignore)
+{
+    /* --include vendor -i dist */
+    tt_cli_opts_t opts;
+    int rc;
+    PARSE("--include", "vendor", "-i", "dist");
+    TT_ASSERT_EQ_INT(0, rc);
+    TT_ASSERT_EQ_INT(1, opts.include_count);
+    TT_ASSERT_EQ_STR("vendor", opts.include_patterns[0]);
+    TT_ASSERT_EQ_INT(1, opts.ignore_count);
+    TT_ASSERT_EQ_STR("dist", opts.ignore_patterns[0]);
+    tt_cli_opts_free(&opts);
+}
+
 void run_cli_tests(void)
 {
     /* Long boolean flags */
@@ -1189,4 +1216,8 @@ void run_cli_tests(void)
     TT_RUN(test_cli_only_command);
     TT_RUN(test_cli_value_flag_at_end_no_value);
     TT_RUN(test_cli_short_value_at_end_no_value);
+
+    /* --include / -I */
+    TT_RUN(test_cli_include_flag);
+    TT_RUN(test_cli_include_with_ignore);
 }

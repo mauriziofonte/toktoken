@@ -18,6 +18,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include "test_compat.h"
 #include <stdio.h>
 #include <unistd.h>
 #include <sys/stat.h>

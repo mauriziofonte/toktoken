@@ -46,7 +46,7 @@ Works with Claude Code, Cursor, Windsurf, Copilot, Gemini, Codex, **and any MCP-
 - **Centrality-based ranking**: symbols ranked by import-graph centrality in addition to FTS relevance
 - **MCP server** (`toktoken serve`) for native IDE integration with tiered tool loading
 - **GitHub repo indexing** (`toktoken index:github owner/repo`) -- index any public repo without cloning
-- **Smart filtering**: excludes non-code files (CSS, HTML) and vendored directories by default
+- **Smart filtering**: excludes non-code files (CSS, HTML) and vendored directories by default, with selective `--include` override
 - **Security**: symlink escape detection, secret pattern filtering, binary exclusion
 - **Token savings tracking**: cumulative metrics via the `stats` command
 - **Auto-update**: `--self-update` with SHA-256 verification and atomic binary replacement
@@ -151,6 +151,7 @@ Used with `index:create`, `index:update`, and `index:github`.
 | ----- | ---- | -------- | ----------- |
 | `-m` | `--max-files` | `<n>` | Maximum number of files to index. Files beyond this limit are silently skipped. Default: 200000. |
 | `-f` | `--full` | | Disable the smart filter. By default, TokToken excludes non-code files (CSS, HTML, SVG, YAML, XML, TOML, GraphQL) and vendored subdirectories to reduce noise. Markdown files (`.md`, `.markdown`, `.mdx`) are always indexed regardless of the smart filter, producing documentation-specific kinds (`chapter`, `section`, `subsection`). With `--full`, everything is indexed. |
+| `-I` | `--include` | `<dir>` | Force-include a normally-skipped directory (e.g. `vendor`). Repeatable: `-I vendor -I node_modules`. VCS dirs (`.git`, `.svn`, `.hg`) cannot be included. The override persists across `index:update` cycles. Unlike `--full`, this only un-skips the named directory — the smart filter still applies to file extensions inside it. |
 | `-i` | `--ignore` | `<pattern>` | Add an extra ignore pattern. Files/directories matching this glob are skipped during discovery. Repeatable: `-i vendor -i dist -i .cache`. |
 | | `--languages` | `<list>` | Comma-separated list of languages to index. Only files detected as one of these languages are processed. Example: `--languages c,python,rust`. |
 | `-X` | `--diagnostic` | | Enable structured diagnostic output. Emits JSONL events to stderr with per-phase timing, worker progress, memory snapshots, and pipeline metrics. See [Diagnostic Mode](#diagnostic-mode). |
@@ -214,6 +215,9 @@ toktoken search:text "TODO" -g file -C3
 
 # Index with max 10k files, ignore vendor and dist
 toktoken index:create -m10000 -i vendor -i dist
+
+# Index with vendor/ included (e.g. Symfony/Laravel projects)
+toktoken index:create --include vendor
 
 # Index everything (disable smart filter)
 toktoken index:create -f
@@ -352,6 +356,10 @@ cmake --build build -j$(nproc)
 
 # Static binary (Linux)
 cmake -B build -DCMAKE_BUILD_TYPE=Release -DTT_STATIC=ON
+cmake --build build -j$(nproc)
+
+# Windows (MSYS2/MinGW64 shell)
+cmake -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Debug
 cmake --build build -j$(nproc)
 
 # Run tests

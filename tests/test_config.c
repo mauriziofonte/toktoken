@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include "test_compat.h"
 
 TT_TEST(test_cfg_default_values)
 {

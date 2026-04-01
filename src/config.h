@@ -31,6 +31,9 @@ typedef struct
     char **extra_ext_languages; /* [owns] corresponding language strings */
     int extra_ext_count;
 
+    char **include_dirs; /* [owns] dirs to force-include from SKIP_DIRS */
+    int include_dir_count;
+
     int workers;       /* default: 0 = auto (tt_cpu_count) */
     bool smart_filter; /* default: true */
 

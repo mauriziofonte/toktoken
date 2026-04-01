@@ -71,9 +71,44 @@ jobs:
             - name: E2E tests
               run: ./build/test_e2e
 
+    # ── 2b. Test gate: Windows (MSYS2/MinGW64) ──────────────────────────
+    test-windows:
+        needs: [validate]
+        runs-on: windows-latest
+        timeout-minutes: 15
+        defaults:
+            run:
+                shell: msys2 {0}
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: msys2/setup-msys2@v2
+              with:
+                  msystem: MINGW64
+                  update: false
+                  install: >-
+                      mingw-w64-x86_64-gcc
+                      mingw-w64-x86_64-cmake
+                      mingw-w64-x86_64-universal-ctags
+                      make
+
+            - name: Build (Debug)
+              run: |
+                  cmake -B build -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTS=ON
+                  cmake --build build -j$(nproc)
+
+            - name: Unit tests
+              run: ./build/test_unit.exe
+
+            - name: Integration tests
+              run: ./build/test_integration.exe
+
+            - name: E2E tests
+              run: ./build/test_e2e.exe
+
     # ── 3. Build Linux (musl-static x86_64/aarch64, glibc-static armv7) ──
     build-linux:
-        needs: [test]
+        needs: [test, test-windows]
         strategy:
             fail-fast: false
             matrix:
@@ -145,7 +180,7 @@ jobs:
 
     # ── 4. Build macOS (x86_64 + aarch64, dynamic libSystem only) ──────
     build-macos:
-        needs: [test]
+        needs: [test, test-windows]
         strategy:
             fail-fast: false
             matrix:
@@ -201,7 +236,7 @@ jobs:
 
     # ── 5. Build Windows (x86_64, MinGW cross-compilation) ─────────────
     build-windows:
-        needs: [test]
+        needs: [test, test-windows]
         strategy:
             fail-fast: false
             matrix:

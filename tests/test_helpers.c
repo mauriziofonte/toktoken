@@ -9,9 +9,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <unistd.h>
 #include <errno.h>
-#include <libgen.h>
+#include <time.h>
 
 const char *tt_test_fixtures_dir(void)
 {
@@ -35,7 +34,7 @@ const char *tt_test_fixtures_dir(void)
             snprintf(sentinel, sizeof(sentinel), "%s/sample.blade.php", candidates[i]);
             if (stat(sentinel, &st) != 0) continue;
 
-            char *rp = realpath(candidates[i], NULL);
+            char *rp = tt_realpath(candidates[i]);
             if (rp) {
                 snprintf(buf, sizeof(buf), "%s", rp);
                 free(rp);
@@ -59,19 +58,31 @@ const char *tt_test_fixture(const char *relative_path)
 
 char *tt_test_tmpdir(void)
 {
-    char tpl[256];
-    snprintf(tpl, sizeof(tpl), "/tmp/tt_test_XXXXXX");
-    char *dir = mkdtemp(tpl);
-    if (!dir) return NULL;
-    return strdup(dir);
+    /*
+     * Cross-platform temp directory creation.
+     * Uses tt_getpid() + clock() for a unique suffix, then tt_mkdir_p().
+     */
+    const char *base;
+#ifdef TT_PLATFORM_WINDOWS
+    base = getenv("TEMP");
+    if (!base) base = getenv("TMP");
+    if (!base) base = "C:\\Temp";
+#else
+    base = "/tmp";
+#endif
+
+    char path[512];
+    snprintf(path, sizeof(path), "%s/tt_test_%d_%lu",
+             base, tt_getpid(), (unsigned long)clock());
+
+    if (tt_mkdir_p(path) != 0) return NULL;
+    return strdup(path);
 }
 
 int tt_test_rmdir(const char *path)
 {
     if (!path) return -1;
-    char cmd[2048];
-    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", path);
-    return system(cmd);
+    return tt_remove_dir_recursive(path);
 }
 
 /* Ensure parent directories exist for a file path. */
@@ -80,8 +91,15 @@ static int ensure_parent_dir(const char *filepath)
     char *tmp = strdup(filepath);
     if (!tmp) return -1;
 
-    char *dir = dirname(tmp);
-    int rc = tt_mkdir_p(dir);
+    /* Find last separator (works with both / and \) */
+    char *last_sep = NULL;
+    for (char *p = tmp; *p; p++) {
+        if (*p == '/' || *p == '\\') last_sep = p;
+    }
+    if (!last_sep) { free(tmp); return 0; } /* no directory component */
+
+    *last_sep = '\0';
+    int rc = tt_mkdir_p(tmp);
     free(tmp);
     return rc;
 }

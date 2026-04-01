@@ -806,6 +806,67 @@ void tt_sleep_ms(int ms)
     nanosleep(&ts, NULL);
 }
 
+/* ===== Thread abstraction (POSIX) ===== */
+
+typedef struct
+{
+    tt_thread_fn fn;
+    void *arg;
+} tt_thread_trampoline_t;
+
+static void *thread_trampoline(void *raw)
+{
+    tt_thread_trampoline_t *t = (tt_thread_trampoline_t *)raw;
+    t->fn(t->arg);
+    free(t);
+    return NULL;
+}
+
+int tt_thread_create(tt_thread_t *thread, tt_thread_fn fn, void *arg)
+{
+    tt_thread_trampoline_t *t = malloc(sizeof(tt_thread_trampoline_t));
+    if (!t)
+        return -1;
+    t->fn = fn;
+    t->arg = arg;
+    if (pthread_create(thread, NULL, thread_trampoline, t) != 0)
+    {
+        free(t);
+        return -1;
+    }
+    return 0;
+}
+
+int tt_thread_join(tt_thread_t thread)
+{
+    return pthread_join(thread, NULL) == 0 ? 0 : -1;
+}
+
+char *tt_tmpfile_write(const char *prefix, const char *data, size_t len)
+{
+    char tmp_path[256];
+    snprintf(tmp_path, sizeof(tmp_path), "/tmp/%s_%d_XXXXXX",
+             prefix ? prefix : "tt", (int)getpid());
+    int fd = mkstemp(tmp_path);
+    if (fd < 0)
+        return NULL;
+    ssize_t written = write(fd, data, len);
+    close(fd);
+    if (written < 0 || (size_t)written != len)
+    {
+        unlink(tmp_path);
+        return NULL;
+    }
+    return strdup(tmp_path);
+}
+
+int tt_getpid(void)
+{
+    return (int)getpid();
+}
+
+/* ===== Which ===== */
+
 char *tt_which(const char *name)
 {
     if (!name)

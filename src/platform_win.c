@@ -709,6 +709,83 @@ void tt_sleep_ms(int ms)
     Sleep((DWORD)ms);
 }
 
+/* ===== Thread abstraction (Windows) ===== */
+
+typedef struct
+{
+    tt_thread_fn fn;
+    void *arg;
+} tt_thread_trampoline_t;
+
+static DWORD WINAPI thread_trampoline(LPVOID raw)
+{
+    tt_thread_trampoline_t *t = (tt_thread_trampoline_t *)raw;
+    t->fn(t->arg);
+    free(t);
+    return 0;
+}
+
+int tt_thread_create(tt_thread_t *thread, tt_thread_fn fn, void *arg)
+{
+    tt_thread_trampoline_t *t = malloc(sizeof(tt_thread_trampoline_t));
+    if (!t)
+        return -1;
+    t->fn = fn;
+    t->arg = arg;
+    HANDLE h = CreateThread(NULL, 0, thread_trampoline, t, 0, NULL);
+    if (!h)
+    {
+        free(t);
+        return -1;
+    }
+    *thread = h;
+    return 0;
+}
+
+int tt_thread_join(tt_thread_t thread)
+{
+    HANDLE h = (HANDLE)thread;
+    if (!h)
+        return -1;
+    WaitForSingleObject(h, INFINITE);
+    CloseHandle(h);
+    return 0;
+}
+
+char *tt_tmpfile_write(const char *prefix, const char *data, size_t len)
+{
+    char tmp_dir[MAX_PATH];
+    DWORD dlen = GetTempPathA(sizeof(tmp_dir), tmp_dir);
+    if (dlen == 0 || dlen >= sizeof(tmp_dir))
+        return NULL;
+
+    char tmp_path[MAX_PATH];
+    char pfx[4] = "tt_";
+    if (prefix && prefix[0])
+    {
+        pfx[0] = prefix[0];
+        pfx[1] = prefix[1] ? prefix[1] : '_';
+        pfx[2] = prefix[2] ? prefix[2] : '_';
+        pfx[3] = '\0';
+    }
+    if (GetTempFileNameA(tmp_dir, pfx, 0, tmp_path) == 0)
+        return NULL;
+
+    if (tt_write_file(tmp_path, data, len) < 0)
+    {
+        DeleteFileA(tmp_path);
+        return NULL;
+    }
+    return _strdup(tmp_path);
+}
+
+int tt_getpid(void)
+{
+    return (int)GetCurrentProcessId();
+}
+
+/* ===== Which ===== */
+
 char *tt_which(const char *name)
 {
     if (!name) return NULL;

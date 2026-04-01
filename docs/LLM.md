@@ -212,8 +212,8 @@ toktoken index:update
 | Tool | Description |
 | ---- | ----------- |
 | `codebase_detect` | Detect if a directory contains indexable source code |
-| `index_create` | Create a full symbol index. Markdown files are always indexed (documentation kinds: chapter, section, subsection). Pass `full: true` to also include CSS, HTML, YAML, etc. |
-| `index_update` | Incrementally update the index. Pass `full: true` to include all file types |
+| `index_create` | Create a full symbol index. Markdown files are always indexed (documentation kinds: chapter, section, subsection). Pass `full: true` to also include CSS, HTML, YAML, etc. Pass `include: ["vendor"]` to selectively include normally-skipped directories. |
+| `index_update` | Incrementally update the index. Pass `full: true` to include all file types. Pass `include: ["vendor"]` to selectively include normally-skipped directories. |
 | `index_github` | Clone and index a GitHub repository |
 | `search_symbols` | Search symbols by name (returns IDs for inspect_symbol) |
 | `search_text` | Grep-like text search across indexed files |
@@ -349,8 +349,8 @@ toktoken inspect:tree --depth 2
 | Command | Description |
 | ------- | ----------- |
 | `stats` | Index statistics + token savings report (includes per-tool savings breakdown) |
-| `index:create [path]` | Full index from scratch. Use `--full` to include all file types and vendors |
-| `index:update [path]` | Incremental re-index. Use `--full` to include all file types and vendors |
+| `index:create [path]` | Full index from scratch. Use `--full` to include all file types and vendors. Use `--include <dir>` to selectively include a skipped directory (e.g. `--include vendor`). |
+| `index:update [path]` | Incremental re-index. Use `--full` to include all file types and vendors. Use `--include <dir>` to selectively include a skipped directory. |
 | `index:file <file>` | Reindex a single file without rebuilding the full index |
 | `index:github <owner/repo>` | Clone and index a GitHub repository |
 | `inspect:bundle <id>` | Symbol context bundle (definition + imports + outline). Use `--full` for importers. Supports comma-separated IDs, `--include-callers`, `--format markdown` |
@@ -650,12 +650,13 @@ Place in the project root to customize indexing behavior:
         "extra_ignore_patterns": ["*.generated.go", "dist/"],
         "languages": ["python", "javascript", "typescript"],
         "extra_extensions": {"blade": "php", "svx": "svelte"},
-        "smart_filter": true
+        "smart_filter": true,
+        "include_dirs": []
     }
 }
 ```
 
-Set `"smart_filter": false` to index all file types including CSS, HTML, and vendored subdirectories. Note: Markdown files are always indexed regardless of the smart filter setting.
+Set `"smart_filter": false` to index all file types including CSS, HTML, and vendored subdirectories. Alternatively, use `"include_dirs": ["vendor"]` to selectively include only specific skipped directories without disabling the entire smart filter. Note: Markdown files are always indexed regardless of the smart filter setting.
 
 Global config at `~/.toktoken.json` supports all sections (`index`, `logging`). Project config only supports `index`.
 
@@ -664,6 +665,7 @@ Environment variables (highest priority):
 - `TOKTOKEN_EXTRA_IGNORE` -- JSON array or comma-separated patterns
 - `TOKTOKEN_STALENESS_DAYS` -- integer (min 1)
 - `TOKTOKEN_EXTRA_EXTENSIONS` -- "ext1:lang1,ext2:lang2"
+- `TOKTOKEN_INCLUDE_DIRS` -- JSON array or comma-separated directories to force-include
 
 ---
 
@@ -680,6 +682,7 @@ Likely causes:
 1. **Wrong directory:** `toktoken codebase:detect` must return `action: "index:create"` or `action: "ready"`. If it returns exit code 1, the directory has no indexable source files.
 2. **Smart filter excluded everything:** If your project is primarily CSS/HTML/YAML, run `toktoken index:create --full` to disable the smart filter. Note: Markdown files (`.md`) are never excluded by the smart filter.
 3. **Language not supported:** Check [docs/LANGUAGES.md](LANGUAGES.md) for the list of supported languages. If your language uses non-standard file extensions, configure `extra_extensions` in `.toktoken.json`.
+4. **Vendor code not indexed:** Use `--include vendor` (CLI) or `include: ["vendor"]` (MCP) to selectively include vendor/ without disabling the entire smart filter.
 
 ### `index:create` is very slow (> 60 seconds for a small project)
 

@@ -23,7 +23,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#ifndef TT_PLATFORM_WINDOWS
 #include <unistd.h>
+#endif
+#include "test_compat.h"
 
 /* ---- Fixture helpers ---- */
 

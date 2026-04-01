@@ -16,12 +16,28 @@
 #ifdef TT_PLATFORM_WINDOWS
 
 /*
- * Windows: ctags streaming not yet implemented.
- * Opaque struct -- all API calls return errors gracefully.
+ * Windows: ctags streaming via CreateProcessW + anonymous pipes.
+ *
+ * Stderr is drained by a dedicated thread to prevent pipe deadlock.
+ * Stdout is read via PeekNamedPipe + ReadFile polling loop.
+ * Handles are stored as void* to avoid #include <windows.h> in the header.
  */
 typedef struct
 {
-    bool finished;
+    void *hProcess;        /* HANDLE: ctags process */
+    void *hStdoutRead;     /* HANDLE: read end of stdout pipe */
+    void *hStderrRead;     /* HANDLE: read end of stderr pipe */
+    void *hStderrThread;   /* HANDLE: stderr drainer thread */
+    char *line_buf;        /* [owns] reusable line buffer */
+    size_t line_buf_cap;   /* allocated capacity */
+    size_t line_buf_used;  /* bytes currently in buffer */
+    size_t line_buf_start; /* offset of unconsumed data (deferred compaction) */
+    char *stderr_buf;      /* [owns] accumulated stderr */
+    size_t stderr_buf_cap;
+    size_t stderr_buf_used;
+    void *stderr_cs;       /* [owns] CRITICAL_SECTION* for stderr_buf access */
+    uint64_t deadline_ms;  /* absolute deadline (monotonic clock), 0 = none */
+    bool finished;         /* true after EOF or error */
 } tt_ctags_stream_t;
 
 #else /* POSIX */

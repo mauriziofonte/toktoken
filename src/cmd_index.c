@@ -51,8 +51,35 @@ static cJSON *make_error(const char *code, const char *message, const char *hint
     return json;
 }
 
+/*
+ * Build a NULL-terminated include_dirs array merging config + CLI patterns.
+ * [caller-frees] the returned array (not the strings, which are borrowed).
+ */
+static const char **build_include_dirs(tt_cli_opts_t *opts, const tt_config_t *config)
+{
+    int total = (config ? config->include_dir_count : 0) + opts->include_count;
+    if (total <= 0)
+        return NULL;
+
+    const char **arr = calloc((size_t)(total + 1), sizeof(char *));
+    if (!arr)
+        return NULL;
+
+    int idx = 0;
+    if (config)
+    {
+        for (int i = 0; i < config->include_dir_count; i++)
+            arr[idx++] = config->include_dirs[i];
+    }
+    for (int i = 0; i < opts->include_count; i++)
+        arr[idx++] = opts->include_patterns[i];
+    arr[idx] = NULL;
+    return arr;
+}
+
 /* Set all standard metadata after indexing */
-static void set_metadata(tt_index_store_t *store, const char *project_path, bool full)
+static void set_metadata(tt_index_store_t *store, const char *project_path,
+                         bool full, const char **include_dirs)
 {
     const char *ts = tt_now_rfc3339();
     tt_store_set_metadata(store, "indexed_at", ts);
@@ -68,6 +95,31 @@ static void set_metadata(tt_index_store_t *store, const char *project_path, bool
     free(head);
 
     tt_store_set_metadata(store, "full_index", full ? "1" : "0");
+
+    /* Persist include_dirs as comma-separated string */
+    if (include_dirs && include_dirs[0])
+    {
+        size_t len = 0;
+        for (const char **p = include_dirs; *p; p++)
+            len += strlen(*p) + 1; /* +1 for comma or NUL */
+        char *buf = malloc(len);
+        if (buf)
+        {
+            buf[0] = '\0';
+            for (const char **p = include_dirs; *p; p++)
+            {
+                if (p != include_dirs)
+                    strcat(buf, ",");
+                strcat(buf, *p);
+            }
+            tt_store_set_metadata(store, "include_dirs", buf);
+            free(buf);
+        }
+    }
+    else
+    {
+        tt_store_set_metadata(store, "include_dirs", "");
+    }
 }
 
 /*
@@ -157,6 +209,9 @@ cJSON *tt_cmd_index_create_exec(tt_cli_opts_t *opts)
     /* Build extra ignore patterns (config + CLI merged) */
     const char **extra_ignore = build_extra_ignore(opts, &config);
 
+    /* Build include_dirs (config + CLI merged) */
+    const char **include_dirs = build_include_dirs(opts, &config);
+
     /* Emit sysinfo after config is loaded but before work begins */
     {
         int diag_K = config.workers > 0 ? config.workers : tt_cpu_count();
@@ -178,8 +233,10 @@ cJSON *tt_cmd_index_create_exec(tt_cli_opts_t *opts)
 
     tt_file_filter_t ff;
     if (tt_file_filter_init(&ff, config.max_file_size_kb, extra_ignore,
-                            config.smart_filter && !opts->full) < 0)
+                            config.smart_filter && !opts->full,
+                            include_dirs) < 0)
     {
+        free(include_dirs);
         free(extra_ignore);
         free(ctags_path);
         tt_config_free(&config);
@@ -193,6 +250,7 @@ cJSON *tt_cmd_index_create_exec(tt_cli_opts_t *opts)
     if (tt_discover_paths(project_path, &ff, &discovered) < 0)
     {
         tt_file_filter_free(&ff);
+        free(include_dirs);
         free(extra_ignore);
         free(ctags_path);
         tt_config_free(&config);
@@ -218,6 +276,7 @@ cJSON *tt_cmd_index_create_exec(tt_cli_opts_t *opts)
     if (discovered.count == 0)
     {
         tt_discovered_paths_free(&discovered);
+        free(include_dirs);
         free(ctags_path);
         tt_config_free(&config);
         cJSON *err = make_error("no_files",
@@ -241,6 +300,7 @@ cJSON *tt_cmd_index_create_exec(tt_cli_opts_t *opts)
         cJSON *err = make_error("storage_error",
                                 "Failed to open database", NULL);
         tt_discovered_paths_free(&discovered);
+        free(include_dirs);
         free(ctags_path);
         tt_config_free(&config);
         free(project_path);
@@ -255,6 +315,7 @@ cJSON *tt_cmd_index_create_exec(tt_cli_opts_t *opts)
                                 "Failed to prepare statements", NULL);
         tt_database_close(&db);
         tt_discovered_paths_free(&discovered);
+        free(include_dirs);
         free(ctags_path);
         tt_config_free(&config);
         free(project_path);
@@ -298,6 +359,7 @@ cJSON *tt_cmd_index_create_exec(tt_cli_opts_t *opts)
         tt_store_close(&store);
         tt_database_close(&db);
         tt_discovered_paths_free(&discovered);
+        free(include_dirs);
         free(ctags_path);
         tt_config_free(&config);
         free(project_path);
@@ -329,6 +391,7 @@ cJSON *tt_cmd_index_create_exec(tt_cli_opts_t *opts)
         tt_store_close(&store);
         tt_database_close(&db);
         tt_discovered_paths_free(&discovered);
+        free(include_dirs);
         free(ctags_path);
         tt_config_free(&config);
         free(project_path);
@@ -390,7 +453,8 @@ cJSON *tt_cmd_index_create_exec(tt_cli_opts_t *opts)
                 "\"dur_ms\":%llu", (unsigned long long)(t5 - t0));
     }
 
-    set_metadata(&store, project_path, opts->full);
+    set_metadata(&store, project_path, opts->full, include_dirs);
+    free(include_dirs);
 
     /* WAL checkpoint */
     sqlite3_exec(db.db, "PRAGMA wal_checkpoint(TRUNCATE)", NULL, NULL, NULL);
@@ -589,8 +653,56 @@ cJSON *tt_cmd_index_update_exec(tt_cli_opts_t *opts)
         }
     }
 
+    /* Restore include_dirs from metadata if the caller didn't specify any.
+     * Same logic as full_index restoration: inherit from the original create.
+     * We inject restored dirs into config so build_include_dirs() picks them up
+     * and tt_config_free() handles cleanup. */
+    if (opts->include_count == 0 && config.include_dir_count == 0)
+    {
+        sqlite3_stmt *incl_stmt = NULL;
+        if (sqlite3_prepare_v2(db.db,
+                               "SELECT value FROM metadata WHERE key='include_dirs'",
+                               -1, &incl_stmt, NULL) == SQLITE_OK)
+        {
+            if (sqlite3_step(incl_stmt) == SQLITE_ROW)
+            {
+                const char *val = (const char *)sqlite3_column_text(incl_stmt, 0);
+                if (val && val[0])
+                {
+                    int count = 0;
+                    char **parts = tt_str_split(val, ',', &count);
+                    if (parts)
+                    {
+                        for (int i = 0; i < count; i++)
+                        {
+                            char *trimmed = tt_str_trim(parts[i]);
+                            if (trimmed && trimmed[0])
+                            {
+                                /* add_include_dir() does tt_strdup + dedup internally.
+                                 * Declared static in config.c — we replicate the logic. */
+                                char **new_arr = realloc(config.include_dirs,
+                                                         (size_t)(config.include_dir_count + 1) * sizeof(char *));
+                                if (new_arr)
+                                {
+                                    config.include_dirs = new_arr;
+                                    config.include_dirs[config.include_dir_count] = tt_strdup(trimmed);
+                                    config.include_dir_count++;
+                                }
+                            }
+                        }
+                        tt_str_split_free(parts);
+                    }
+                }
+            }
+            sqlite3_finalize(incl_stmt);
+        }
+    }
+
     /* Build extra ignore patterns (config + CLI merged) */
     const char **extra_ignore = build_extra_ignore(opts, &config);
+
+    /* Build include_dirs (config + CLI + restored metadata merged) */
+    const char **include_dirs = build_include_dirs(opts, &config);
 
     /* Emit sysinfo for update path */
     {
@@ -611,8 +723,10 @@ cJSON *tt_cmd_index_update_exec(tt_cli_opts_t *opts)
 
     tt_file_filter_t ff;
     if (tt_file_filter_init(&ff, config.max_file_size_kb, extra_ignore,
-                            config.smart_filter && !opts->full) < 0)
+                            config.smart_filter && !opts->full,
+                            include_dirs) < 0)
     {
+        free(include_dirs);
         free(extra_ignore);
         free(ctags_path);
         tt_lang_clear_extra_extensions();
@@ -628,6 +742,7 @@ cJSON *tt_cmd_index_update_exec(tt_cli_opts_t *opts)
     if (tt_discover_paths(project_path, &ff, &discovered) < 0)
     {
         tt_file_filter_free(&ff);
+        free(include_dirs);
         free(extra_ignore);
         free(ctags_path);
         tt_config_free(&config);
@@ -659,6 +774,7 @@ cJSON *tt_cmd_index_update_exec(tt_cli_opts_t *opts)
     if (tt_store_init(&store, &db) < 0)
     {
         tt_discovered_paths_free(&discovered);
+        free(include_dirs);
         free(ctags_path);
         tt_config_free(&config);
         tt_database_close(&db);
@@ -679,6 +795,7 @@ cJSON *tt_cmd_index_update_exec(tt_cli_opts_t *opts)
     {
         tt_store_close(&store);
         tt_discovered_paths_free(&discovered);
+        free(include_dirs);
         free(ctags_path);
         tt_config_free(&config);
         tt_database_close(&db);
@@ -717,7 +834,8 @@ cJSON *tt_cmd_index_update_exec(tt_cli_opts_t *opts)
             }
         }
 
-        set_metadata(&store, project_path, opts->full);
+        set_metadata(&store, project_path, opts->full, include_dirs);
+        free(include_dirs);
 
         cJSON *result = cJSON_CreateObject();
         cJSON_AddNumberToObject(result, "changed", 0);
@@ -743,6 +861,7 @@ cJSON *tt_cmd_index_update_exec(tt_cli_opts_t *opts)
         tt_changes_fast_free(&changes);
         tt_store_close(&store);
         tt_discovered_paths_free(&discovered);
+        free(include_dirs);
         free(ctags_path);
         tt_config_free(&config);
         tt_database_close(&db);
@@ -850,6 +969,7 @@ cJSON *tt_cmd_index_update_exec(tt_cli_opts_t *opts)
             tt_changes_fast_free(&changes);
             tt_store_close(&store);
             tt_discovered_paths_free(&discovered);
+            free(include_dirs);
             free(ctags_path);
             tt_config_free(&config);
             tt_database_close(&db);
@@ -971,7 +1091,8 @@ cJSON *tt_cmd_index_update_exec(tt_cli_opts_t *opts)
                 use_incremental ? "true" : "false");
     }
 
-    set_metadata(&store, project_path, opts->full);
+    set_metadata(&store, project_path, opts->full, include_dirs);
+    free(include_dirs);
 
     /* WAL checkpoint */
     sqlite3_exec(db.db, "PRAGMA wal_checkpoint(TRUNCATE)", NULL, NULL, NULL);
@@ -1009,6 +1130,7 @@ interrupted:
     tt_changes_fast_free(&changes);
     tt_store_close(&store);
     tt_discovered_paths_free(&discovered);
+    free(include_dirs);
     free(ctags_path);
     tt_config_free(&config);
     tt_database_close(&db);

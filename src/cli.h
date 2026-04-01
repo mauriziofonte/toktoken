@@ -59,6 +59,10 @@ typedef struct
     const char **ignore_patterns;
     int ignore_count;
 
+    /* --include (repeatable, force-include skipped dirs) */
+    const char **include_patterns;
+    int include_count;
+
     /* --languages (comma-separated, index:create only) */
     const char *languages;
 

@@ -13,6 +13,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <cJSON.h>
+#include "test_compat.h"
 
 /* ---- Helpers ---- */
 

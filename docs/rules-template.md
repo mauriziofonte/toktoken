@@ -103,6 +103,11 @@ subdirectories by default. Markdown is always indexed.
 Re-index with `--full` when targeting excluded file types. Inform the user
 before re-indexing.
 
+To selectively include a skipped directory (e.g. vendor/) without disabling the
+entire smart filter, use `--include vendor` (CLI) or pass `include: ["vendor"]`
+(MCP `index_create`/`index_update`). VCS dirs (`.git`, `.svn`, `.hg`) cannot be
+included.
+
 ## Rules
 
 - Do not read entire files when a symbol retrieval suffices

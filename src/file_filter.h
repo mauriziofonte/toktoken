@@ -40,6 +40,7 @@ typedef struct
     const char **extra_ignore; /* [borrows] NULL-terminated, caller-owned */
     bool smart_filter;         /* exclude nocode extensions + prune vendor dirs */
     tt_hashmap_t *workspace_dirs; /* [owns] relative workspace member paths (monorepo) */
+    tt_hashmap_t *include_dirs;   /* [owns] force-included dirs (override skip_dirs) */
 } tt_file_filter_t;
 
 /*
@@ -49,10 +50,14 @@ typedef struct
  * extra_ignore: NULL-terminated array of additional ignore patterns, or NULL.
  * smart_filter: when true, exclude non-code extensions (CSS, HTML, etc.) and
  *               prune subdirectories containing package manager manifests.
+ * include_dirs: NULL-terminated array of directory names to force-include even
+ *               if in SKIP_DIRS (e.g. "vendor"). VCS dirs (.git, .svn, .hg) are
+ *               always blocked. Pass NULL for default behavior.
  * Returns 0 on success, -1 on error.
  */
 int tt_file_filter_init(tt_file_filter_t *ff, int max_file_size_kb,
-                        const char **extra_ignore, bool smart_filter);
+                        const char **extra_ignore, bool smart_filter,
+                        const char **include_dirs);
 
 /*
  * tt_file_filter_add_extensions -- Add extra source extensions at runtime.

@@ -59,6 +59,16 @@ Symbol Scorer / Text Search
 6. **Storage** (`index_store.c`): inserts files, symbols, and imports into SQLite. FTS5 index is kept in sync via triggers.
 7. **Import extraction** (`import_extractor.c`): parses import/include/require statements for dependency graph.
 
+### Cross-Platform Pipeline
+
+The indexing pipeline is implemented once in `index_pipeline.c` and uses platform abstractions for portability:
+
+- **Threading**: `tt_thread_create()`/`tt_thread_join()` (pthreads on Unix, `CreateThread`/`WaitForSingleObject` on Windows)
+- **Temp files**: `tt_tmpfile_write()` (mkstemp on Unix, `GetTempPathA`/`GetTempFileNameA` on Windows)
+- **Sleep**: `tt_sleep_ms()` (`usleep` on Unix, `Sleep` on Windows)
+
+On Windows, ctags subprocess management (`ctags_stream_win.c`) uses `CreateProcessW` with anonymous pipes and a dedicated stderr drainer thread to prevent pipe deadlock. Stdout is read via a `PeekNamedPipe`/`ReadFile` polling loop with deadline-based timeout.
+
 ### Incremental Updates
 
 `index:update` compares xxHash (XXH3) content hashes of on-disk files against stored hashes. Only changed files are re-processed. Deleted files are removed from the index.
@@ -70,6 +80,8 @@ When active, the smart filter applies two additional exclusion layers during fil
 1. **Non-code extensions**: CSS, SCSS, LESS, SASS, HTML, HTM, SVG, TOML, GraphQL, XML, XUL, YAML, YML are excluded because ctags extracts selectors/tags as "symbols" that pollute search results (e.g., 38,000 CSS class selectors vs. actual code functions). **Exception:** Markdown files (`.md`, `.markdown`, `.mdx`) are always indexed regardless of the smart filter — headings produce high-quality documentation symbols (chapter, section, subsection).
 
 2. **Vendor manifest detection**: Subdirectories containing package manager manifests (composer.json, package.json, setup.py, pyproject.toml, Cargo.toml, go.mod, pom.xml, build.gradle) are pruned as likely vendored third-party code.
+
+3. **Force-include override**: The `--include` flag (or `include_dirs` config, or MCP `include` parameter) allows selectively re-enabling specific directories from the skip list. This override is applied at filter init time by removing the named directories from the `skip_dirs` hashmap and skipping them in the static `SKIP_DIRS` array check. VCS directories (`.git`, `.svn`, `.hg`) are never includable. The smart filter still applies to file extensions inside included directories.
 
 Disable with `--full` flag, `"smart_filter": false` in config, or the `full` MCP parameter.
 
@@ -141,7 +153,7 @@ Current schema version: **4**. Tables:
 
 | Table | Purpose |
 | ----- | ------- |
-| `metadata` | Key-value store (schema_version, indexed_at, git_head) |
+| `metadata` | Key-value store (schema_version, indexed_at, git_head, include_dirs) |
 | `files` | Indexed files with path, hash, language, size |
 | `symbols` | Extracted symbols with name, kind, signature, byte offsets |
 | `imports` | Import/include relationships between files |

@@ -42,7 +42,7 @@ TT_TEST(test_int_ff_discover_includes_source)
     tt_test_write_file(tmpdir, "src/index.js", "export default {};");
 
     tt_file_filter_t ff;
-    tt_file_filter_init(&ff, 500, NULL, false);
+    tt_file_filter_init(&ff, 500, NULL, false, NULL);
     tt_discovered_paths_t dp = {0};
     tt_discover_paths(tmpdir, &ff, &dp);
 
@@ -64,7 +64,7 @@ TT_TEST(test_int_ff_discover_excludes_vendor)
     tt_test_write_file(tmpdir, "vendor/autoload.php", "<?php // autoloader");
 
     tt_file_filter_t ff;
-    tt_file_filter_init(&ff, 500, NULL, false);
+    tt_file_filter_init(&ff, 500, NULL, false, NULL);
     tt_discovered_paths_t dp = {0};
     tt_discover_paths(tmpdir, &ff, &dp);
 
@@ -85,7 +85,7 @@ TT_TEST(test_int_ff_discover_excludes_git)
     tt_test_write_file(tmpdir, ".git/config", "[core]");
 
     tt_file_filter_t ff;
-    tt_file_filter_init(&ff, 500, NULL, false);
+    tt_file_filter_init(&ff, 500, NULL, false, NULL);
     tt_discovered_paths_t dp = {0};
     tt_discover_paths(tmpdir, &ff, &dp);
 
@@ -106,7 +106,7 @@ TT_TEST(test_int_ff_discover_excludes_secrets)
     tt_test_write_file(tmpdir, ".env", "SECRET=value");
 
     tt_file_filter_t ff;
-    tt_file_filter_init(&ff, 500, NULL, false);
+    tt_file_filter_init(&ff, 500, NULL, false, NULL);
     tt_discovered_paths_t dp = {0};
     tt_discover_paths(tmpdir, &ff, &dp);
 
@@ -128,7 +128,7 @@ TT_TEST(test_int_ff_toktokenignore_support)
     tt_test_write_file(tmpdir, ".toktokenignore", "src/index.js\n");
 
     tt_file_filter_t ff;
-    tt_file_filter_init(&ff, 500, NULL, false);
+    tt_file_filter_init(&ff, 500, NULL, false, NULL);
 
     char ignore_path[512];
     snprintf(ignore_path, sizeof(ignore_path), "%s/.toktokenignore", tmpdir);
@@ -171,7 +171,7 @@ TT_TEST(test_int_ff_edge_binary)
     tt_test_write_file(tmpdir, "src/normal.c", "int main() { return 0; }");
 
     tt_file_filter_t ff;
-    tt_file_filter_init(&ff, 0, NULL, false);
+    tt_file_filter_init(&ff, 0, NULL, false, NULL);
     tt_discovered_paths_t dp = {0};
     tt_discover_paths(tmpdir, &ff, &dp);
 
@@ -193,7 +193,7 @@ TT_TEST(test_int_ff_edge_empty)
     tt_test_write_file(tmpdir, "src/empty.c", "");
 
     tt_file_filter_t ff;
-    tt_file_filter_init(&ff, 0, NULL, false);
+    tt_file_filter_init(&ff, 0, NULL, false, NULL);
     tt_discovered_paths_t dp = {0};
     tt_discover_paths(tmpdir, &ff, &dp);
 
@@ -218,7 +218,7 @@ TT_TEST(test_int_ff_edge_size_limit)
     tt_test_write_file(tmpdir, "src/small.c", "int x;");
 
     tt_file_filter_t ff;
-    tt_file_filter_init(&ff, 1, NULL, false); /* 1 KB limit */
+    tt_file_filter_init(&ff, 1, NULL, false, NULL); /* 1 KB limit */
     tt_discovered_paths_t dp = {0};
     tt_discover_paths(tmpdir, &ff, &dp);
 
@@ -241,7 +241,7 @@ TT_TEST(test_int_ff_edge_mixed_case_ext)
     tt_test_write_file(tmpdir, "src/helper.Js", "function(){}");
 
     tt_file_filter_t ff;
-    tt_file_filter_init(&ff, 0, NULL, false);
+    tt_file_filter_init(&ff, 0, NULL, false, NULL);
     tt_discovered_paths_t dp = {0};
     tt_discover_paths(tmpdir, &ff, &dp);
 
@@ -263,7 +263,7 @@ TT_TEST(test_int_ff_edge_rebuild_dir)
     tt_test_write_file(tmpdir, "build/app.c", "int main() {}");
 
     tt_file_filter_t ff;
-    tt_file_filter_init(&ff, 0, NULL, false);
+    tt_file_filter_init(&ff, 0, NULL, false, NULL);
     tt_discovered_paths_t dp = {0};
     tt_discover_paths(tmpdir, &ff, &dp);
 
@@ -293,7 +293,7 @@ TT_TEST(test_int_ff_segment_matching)
     tt_test_write_file(tmpdir, "src/rebuilder/foo.c", "int x;");
 
     tt_file_filter_t ff;
-    tt_file_filter_init(&ff, 0, NULL, false);
+    tt_file_filter_init(&ff, 0, NULL, false, NULL);
     tt_discovered_paths_t dp = {0};
     tt_discover_paths(tmpdir, &ff, &dp);
 
@@ -369,7 +369,7 @@ TT_TEST(test_int_ff_gitignore_parsing)
     tt_test_write_file(tmpdir, "src/.gitignore", "*.generated.php\n");
 
     tt_file_filter_t ff;
-    tt_file_filter_init(&ff, 0, NULL, false);
+    tt_file_filter_init(&ff, 0, NULL, false, NULL);
 
     /* Load root .gitignore */
     tt_file_filter_load_gitignore(&ff, tmpdir, tmpdir);
@@ -425,7 +425,7 @@ TT_TEST(test_int_ff_extra_ignore)
     const char *extra[] = { "staging/*", NULL };
 
     tt_file_filter_t ff;
-    tt_file_filter_init(&ff, 0, extra, false);
+    tt_file_filter_init(&ff, 0, extra, false, NULL);
     tt_discovered_paths_t dp = {0};
     tt_discover_paths(tmpdir, &ff, &dp);
 
@@ -452,7 +452,7 @@ TT_TEST(test_int_ff_skip_file_patterns)
     tt_test_write_file(tmpdir, "package-lock.json", "{}");
 
     tt_file_filter_t ff;
-    tt_file_filter_init(&ff, 0, NULL, false);
+    tt_file_filter_init(&ff, 0, NULL, false, NULL);
     tt_discovered_paths_t dp = {0};
     tt_discover_paths(tmpdir, &ff, &dp);
 
@@ -494,6 +494,7 @@ TT_TEST(test_int_ff_path_validation)
     TT_ASSERT(!tt_path_validate("/tmp", tmpdir),
               "/tmp should not be valid under tmpdir");
 
+#ifndef TT_PLATFORM_WINDOWS
     /* Symlink inside root -> NOT escape */
     {
         char target[2048], link_path[2048];
@@ -520,6 +521,7 @@ TT_TEST(test_int_ff_path_validation)
         TT_ASSERT(tt_is_symlink_escape(link_path, tmpdir),
                   "symlink to /etc/hosts should be escape");
     }
+#endif /* !TT_PLATFORM_WINDOWS */
 
     /* Non-symlink -> NOT escape */
     TT_ASSERT(!tt_is_symlink_escape(inside_path, tmpdir),
@@ -548,7 +550,7 @@ static void test_int_ff_smart_filter_prunes_vendor_subdir(void)
     /* With smart_filter=true, vendor_lib/ should be pruned */
     {
         tt_file_filter_t ff;
-        tt_file_filter_init(&ff, 0, NULL, true);
+        tt_file_filter_init(&ff, 0, NULL, true, NULL);
         tt_discovered_paths_t result;
         int rc = tt_discover_paths(tmpdir, &ff, &result);
         TT_ASSERT(rc == 0, "discover smart_filter=true");
@@ -561,7 +563,7 @@ static void test_int_ff_smart_filter_prunes_vendor_subdir(void)
     /* With smart_filter=false, vendor_lib/lib.js should be included */
     {
         tt_file_filter_t ff;
-        tt_file_filter_init(&ff, 0, NULL, false);
+        tt_file_filter_init(&ff, 0, NULL, false, NULL);
         tt_discovered_paths_t result;
         int rc = tt_discover_paths(tmpdir, &ff, &result);
         TT_ASSERT(rc == 0, "discover smart_filter=false");
@@ -583,7 +585,7 @@ TT_TEST(test_int_ff_markdown_discovered_without_smart_filter)
     tt_test_write_file(tmpdir, "src/main.php", "<?php\n");
 
     tt_file_filter_t ff;
-    tt_file_filter_init(&ff, 0, NULL, false);
+    tt_file_filter_init(&ff, 0, NULL, false, NULL);
     tt_discovered_paths_t result;
     int rc = tt_discover_paths(tmpdir, &ff, &result);
     TT_ASSERT(rc == 0, "discover smart_filter=false");
@@ -605,7 +607,7 @@ TT_TEST(test_int_ff_markdown_included_with_smart_filter)
     tt_test_write_file(tmpdir, "src/main.php", "<?php\n");
 
     tt_file_filter_t ff;
-    tt_file_filter_init(&ff, 0, NULL, true);
+    tt_file_filter_init(&ff, 0, NULL, true, NULL);
     tt_discovered_paths_t result;
     int rc = tt_discover_paths(tmpdir, &ff, &result);
     TT_ASSERT(rc == 0, "discover smart_filter=true");
@@ -628,7 +630,7 @@ TT_TEST(test_int_ff_mdx_included_with_smart_filter)
     tt_test_write_file(tmpdir, "src/index.js", "export default {};\n");
 
     tt_file_filter_t ff;
-    tt_file_filter_init(&ff, 0, NULL, true);
+    tt_file_filter_init(&ff, 0, NULL, true, NULL);
     tt_discovered_paths_t result;
     int rc = tt_discover_paths(tmpdir, &ff, &result);
     TT_ASSERT(rc == 0, "discover smart_filter=true");
@@ -637,6 +639,113 @@ TT_TEST(test_int_ff_mdx_included_with_smart_filter)
     TT_ASSERT(paths_contain(&result, "src/index.js"),
               ".js included with smart filter");
     tt_discovered_paths_free(&result);
+    tt_file_filter_free(&ff);
+    tt_test_rmdir(tmpdir);
+    free(tmpdir);
+}
+
+/* ===== --include (force-include skipped directories) ===== */
+
+TT_TEST(test_int_ff_include_overrides_skip_dirs)
+{
+    char *tmpdir = tt_test_tmpdir();
+    tt_test_write_file(tmpdir, "vendor/autoload.php", "<?php\n");
+    tt_test_write_file(tmpdir, "src/App.php", "<?php class App {}\n");
+
+    const char *incl[] = {"vendor", NULL};
+    tt_file_filter_t ff;
+    tt_file_filter_init(&ff, 0, NULL, false, incl);
+    tt_discovered_paths_t dp = {0};
+    int rc = tt_discover_paths(tmpdir, &ff, &dp);
+    TT_ASSERT(rc == 0, "discover with include_dirs");
+    TT_ASSERT(paths_contain(&dp, "vendor/autoload.php"),
+              "vendor/autoload.php discovered when vendor is included");
+    TT_ASSERT(paths_contain(&dp, "src/App.php"),
+              "src/App.php still discovered");
+    tt_discovered_paths_free(&dp);
+    tt_file_filter_free(&ff);
+    tt_test_rmdir(tmpdir);
+    free(tmpdir);
+}
+
+TT_TEST(test_int_ff_include_preserves_other_skip_dirs)
+{
+    char *tmpdir = tt_test_tmpdir();
+    tt_test_write_file(tmpdir, "vendor/autoload.php", "<?php\n");
+    tt_test_write_file(tmpdir, "node_modules/foo/index.js", "export {};\n");
+    tt_test_write_file(tmpdir, "src/main.js", "console.log('hi');\n");
+
+    const char *incl[] = {"vendor", NULL};
+    tt_file_filter_t ff;
+    tt_file_filter_init(&ff, 0, NULL, false, incl);
+    tt_discovered_paths_t dp = {0};
+    tt_discover_paths(tmpdir, &ff, &dp);
+    TT_ASSERT(paths_contain(&dp, "vendor/autoload.php"),
+              "vendor included");
+    TT_ASSERT(!paths_any_prefix(&dp, "node_modules/"),
+              "node_modules still excluded");
+    tt_discovered_paths_free(&dp);
+    tt_file_filter_free(&ff);
+    tt_test_rmdir(tmpdir);
+    free(tmpdir);
+}
+
+TT_TEST(test_int_ff_include_git_blocked)
+{
+    char *tmpdir = tt_test_tmpdir();
+    tt_test_write_file(tmpdir, ".git/config", "[core]\n");
+    tt_test_write_file(tmpdir, "src/main.c", "int main() {}\n");
+
+    const char *incl[] = {".git", NULL};
+    tt_file_filter_t ff;
+    tt_file_filter_init(&ff, 0, NULL, false, incl);
+    tt_discovered_paths_t dp = {0};
+    tt_discover_paths(tmpdir, &ff, &dp);
+    TT_ASSERT(!paths_any_prefix(&dp, ".git/"),
+              ".git blocked from inclusion");
+    tt_discovered_paths_free(&dp);
+    tt_file_filter_free(&ff);
+    tt_test_rmdir(tmpdir);
+    free(tmpdir);
+}
+
+TT_TEST(test_int_ff_include_segment_matching)
+{
+    char *tmpdir = tt_test_tmpdir();
+    tt_test_write_file(tmpdir, "vendor/package/src/Foo.php", "<?php class Foo {}\n");
+
+    const char *incl[] = {"vendor", NULL};
+    tt_file_filter_t ff;
+    tt_file_filter_init(&ff, 0, NULL, false, incl);
+    tt_discovered_paths_t dp = {0};
+    tt_discover_paths(tmpdir, &ff, &dp);
+    TT_ASSERT(paths_contain(&dp, "vendor/package/src/Foo.php"),
+              "nested file under vendor included");
+    tt_discovered_paths_free(&dp);
+    tt_file_filter_free(&ff);
+    tt_test_rmdir(tmpdir);
+    free(tmpdir);
+}
+
+TT_TEST(test_int_ff_include_with_smart_filter)
+{
+    char *tmpdir = tt_test_tmpdir();
+    tt_test_write_file(tmpdir, "vendor/autoload.php", "<?php\n");
+    tt_test_write_file(tmpdir, "vendor/style.css", "body {}\n");
+    tt_test_write_file(tmpdir, "src/App.php", "<?php class App {}\n");
+
+    const char *incl[] = {"vendor", NULL};
+    tt_file_filter_t ff;
+    tt_file_filter_init(&ff, 0, NULL, true, incl);
+    tt_discovered_paths_t dp = {0};
+    tt_discover_paths(tmpdir, &ff, &dp);
+    TT_ASSERT(paths_contain(&dp, "vendor/autoload.php"),
+              "vendor PHP included with smart filter");
+    TT_ASSERT(!paths_contain(&dp, "vendor/style.css"),
+              "vendor CSS excluded by smart filter nocode extensions");
+    TT_ASSERT(paths_contain(&dp, "src/App.php"),
+              "src PHP still included");
+    tt_discovered_paths_free(&dp);
     tt_file_filter_free(&ff);
     tt_test_rmdir(tmpdir);
     free(tmpdir);
@@ -665,4 +774,10 @@ void run_int_file_filter_tests(void)
     TT_RUN(test_int_ff_markdown_discovered_without_smart_filter);
     TT_RUN(test_int_ff_markdown_included_with_smart_filter);
     TT_RUN(test_int_ff_mdx_included_with_smart_filter);
+
+    TT_RUN(test_int_ff_include_overrides_skip_dirs);
+    TT_RUN(test_int_ff_include_preserves_other_skip_dirs);
+    TT_RUN(test_int_ff_include_git_blocked);
+    TT_RUN(test_int_ff_include_segment_matching);
+    TT_RUN(test_int_ff_include_with_smart_filter);
 }

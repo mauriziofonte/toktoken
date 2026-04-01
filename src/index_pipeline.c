@@ -1,5 +1,5 @@
 /*
- * index_pipeline.c -- Parallel indexing pipeline (POSIX).
+ * index_pipeline.c -- Parallel indexing pipeline (cross-platform).
  *
  * Architecture: K worker threads + 1 writer thread.
  *
@@ -17,12 +17,12 @@
  *
  * Only the writer thread touches SQLite. Workers never call any SQLite function.
  *
- * Windows stub: index_pipeline_win.c
+ * Platform-specific calls are abstracted via platform.h:
+ *   tt_thread_create/join, tt_tmpfile_write, tt_remove_file,
+ *   tt_sleep_ms, tt_getpid, tt_strcasecmp.
  */
 
 #include "platform.h"
-
-#ifndef TT_PLATFORM_WINDOWS
 
 #include "index_pipeline.h"
 #include "ctags_stream.h"
@@ -67,9 +67,12 @@
 
 #include <signal.h>
 
-#include <pthread.h>
+#ifndef TT_PLATFORM_WINDOWS
 #include <unistd.h>
 #include <sys/stat.h>
+#else
+#include <sys/stat.h>  /* MinGW-w64 provides stat() */
+#endif
 
 extern volatile sig_atomic_t tt_interrupted;
 
@@ -118,8 +121,8 @@ typedef struct
 
 struct tt_pipeline_handle
 {
-    pthread_t *worker_threads;
-    pthread_t writer_thread;
+    tt_thread_t *worker_threads;
+    tt_thread_t writer_thread;
     worker_ctx_t *worker_ctxs;
     writer_ctx_t writer_ctx;
     int num_workers;
@@ -955,10 +958,10 @@ static bool is_js_ts_file(const char *rel_path)
 {
     const char *dot = strrchr(rel_path, '.');
     if (!dot) return false;
-    return (strcasecmp(dot, ".js") == 0 || strcasecmp(dot, ".jsx") == 0 ||
-            strcasecmp(dot, ".ts") == 0 || strcasecmp(dot, ".tsx") == 0 ||
-            strcasecmp(dot, ".mjs") == 0 || strcasecmp(dot, ".cjs") == 0 ||
-            strcasecmp(dot, ".mts") == 0);
+    return (tt_strcasecmp(dot, ".js") == 0 || tt_strcasecmp(dot, ".jsx") == 0 ||
+            tt_strcasecmp(dot, ".ts") == 0 || tt_strcasecmp(dot, ".tsx") == 0 ||
+            tt_strcasecmp(dot, ".mjs") == 0 || tt_strcasecmp(dot, ".cjs") == 0 ||
+            tt_strcasecmp(dot, ".mts") == 0);
 }
 
 /*
@@ -988,8 +991,8 @@ static void extract_js_constants(const char *project_root,
     /* Determine language string for symbols */
     const char *dot = strrchr(rel_path, '.');
     const char *lang = "javascript";
-    if (dot && (strcasecmp(dot, ".ts") == 0 || strcasecmp(dot, ".tsx") == 0 ||
-                strcasecmp(dot, ".mts") == 0))
+    if (dot && (tt_strcasecmp(dot, ".ts") == 0 || tt_strcasecmp(dot, ".tsx") == 0 ||
+                tt_strcasecmp(dot, ".mts") == 0))
         lang = "typescript";
 
     tt_symbol_t *extras = NULL;
@@ -1157,40 +1160,40 @@ static void merge_custom_parser(const char *project_root,
     int extra_count = 0;
     int rc = -1;
 
-    if (flen > 10 && strcasecmp(rel_path + flen - 10, ".blade.php") == 0)
+    if (flen > 10 && tt_strcasecmp(rel_path + flen - 10, ".blade.php") == 0)
         rc = tt_parse_blade(project_root, paths, 1, &extra, &extra_count);
-    else if (flen > 7 && strcasecmp(rel_path + flen - 7, ".cshtml") == 0)
+    else if (flen > 7 && tt_strcasecmp(rel_path + flen - 7, ".cshtml") == 0)
         rc = tt_parse_razor(project_root, paths, 1, &extra, &extra_count);
-    else if (flen > 5 && strcasecmp(rel_path + flen - 5, ".twig") == 0)
+    else if (flen > 5 && tt_strcasecmp(rel_path + flen - 5, ".twig") == 0)
         rc = tt_parse_twig(project_root, paths, 1, &extra, &extra_count);
-    else if (flen > 4 && strcasecmp(rel_path + flen - 4, ".vue") == 0)
+    else if (flen > 4 && tt_strcasecmp(rel_path + flen - 4, ".vue") == 0)
         rc = tt_parse_vue(project_root, paths, 1, &extra, &extra_count);
-    else if (flen > 4 && strcasecmp(rel_path + flen - 4, ".ejs") == 0)
+    else if (flen > 4 && tt_strcasecmp(rel_path + flen - 4, ".ejs") == 0)
         rc = tt_parse_ejs(project_root, paths, 1, &extra, &extra_count);
-    else if (flen > 4 && strcasecmp(rel_path + flen - 4, ".nix") == 0)
+    else if (flen > 4 && tt_strcasecmp(rel_path + flen - 4, ".nix") == 0)
         rc = tt_parse_nix(project_root, paths, 1, &extra, &extra_count);
-    else if (flen > 6 && strcasecmp(rel_path + flen - 6, ".gleam") == 0)
+    else if (flen > 6 && tt_strcasecmp(rel_path + flen - 6, ".gleam") == 0)
         rc = tt_parse_gleam(project_root, paths, 1, &extra, &extra_count);
-    else if ((flen > 3 && strcasecmp(rel_path + flen - 3, ".tf") == 0) ||
-             (flen > 4 && strcasecmp(rel_path + flen - 4, ".hcl") == 0) ||
-             (flen > 7 && strcasecmp(rel_path + flen - 7, ".tfvars") == 0))
+    else if ((flen > 3 && tt_strcasecmp(rel_path + flen - 3, ".tf") == 0) ||
+             (flen > 4 && tt_strcasecmp(rel_path + flen - 4, ".hcl") == 0) ||
+             (flen > 7 && tt_strcasecmp(rel_path + flen - 7, ".tfvars") == 0))
         rc = tt_parse_hcl(project_root, paths, 1, &extra, &extra_count);
-    else if ((flen > 8 && strcasecmp(rel_path + flen - 8, ".graphql") == 0) ||
-             (flen > 4 && strcasecmp(rel_path + flen - 4, ".gql") == 0))
+    else if ((flen > 8 && tt_strcasecmp(rel_path + flen - 8, ".graphql") == 0) ||
+             (flen > 4 && tt_strcasecmp(rel_path + flen - 4, ".gql") == 0))
         rc = tt_parse_graphql(project_root, paths, 1, &extra, &extra_count);
-    else if (flen > 3 && strcasecmp(rel_path + flen - 3, ".jl") == 0)
+    else if (flen > 3 && tt_strcasecmp(rel_path + flen - 3, ".jl") == 0)
         rc = tt_parse_julia(project_root, paths, 1, &extra, &extra_count);
-    else if (flen > 3 && strcasecmp(rel_path + flen - 3, ".gd") == 0)
+    else if (flen > 3 && tt_strcasecmp(rel_path + flen - 3, ".gd") == 0)
         rc = tt_parse_gdscript(project_root, paths, 1, &extra, &extra_count);
-    else if (flen > 6 && strcasecmp(rel_path + flen - 6, ".verse") == 0)
+    else if (flen > 6 && tt_strcasecmp(rel_path + flen - 6, ".verse") == 0)
         rc = tt_parse_verse(project_root, paths, 1, &extra, &extra_count);
-    else if ((flen > 4 && strcasecmp(rel_path + flen - 4, ".xml") == 0) ||
-             (flen > 4 && strcasecmp(rel_path + flen - 4, ".xul") == 0))
+    else if ((flen > 4 && tt_strcasecmp(rel_path + flen - 4, ".xml") == 0) ||
+             (flen > 4 && tt_strcasecmp(rel_path + flen - 4, ".xul") == 0))
         rc = tt_parse_xml(project_root, paths, 1, &extra, &extra_count);
-    else if (flen > 4 && strcasecmp(rel_path + flen - 4, ".ahk") == 0)
+    else if (flen > 4 && tt_strcasecmp(rel_path + flen - 4, ".ahk") == 0)
         rc = tt_parse_autohotkey(project_root, paths, 1, &extra, &extra_count);
-    else if ((flen > 4 && strcasecmp(rel_path + flen - 4, ".asm") == 0) ||
-             (flen > 2 && strcasecmp(rel_path + flen - 2, ".s") == 0))
+    else if ((flen > 4 && tt_strcasecmp(rel_path + flen - 4, ".asm") == 0) ||
+             (flen > 2 && tt_strcasecmp(rel_path + flen - 2, ".s") == 0))
         rc = tt_parse_asm(project_root, paths, 1, &extra, &extra_count);
 
     /* OpenAPI check is separate (uses content detection) */
@@ -1246,7 +1249,7 @@ static bool enqueue_batch(tt_symbol_batch_t *batch, worker_ctx_t *ctx)
                 "\"wid\":%d,\"pending\":%lld",
                 ctx->worker_id,
                 (long long)atomic_load(ctx->pending_count));
-        usleep(1000); /* 1ms backpressure */
+        tt_sleep_ms(1); /* 1ms backpressure */
         return true;
     }
     return false;
@@ -1254,36 +1257,17 @@ static bool enqueue_batch(tt_symbol_batch_t *batch, worker_ctx_t *ctx)
 
 /* ===== Worker thread function ===== */
 
-static void *worker_fn(void *arg)
+static void worker_fn(void *arg)
 {
     worker_ctx_t *ctx = (worker_ctx_t *)arg;
     local_batch_t lb;
     if (local_batch_init(&lb) < 0)
     {
         atomic_store(ctx->error_flag, 1);
-        return NULL;
+        return;
     }
 
     /* 1. Write chunk paths to temp file */
-    char tmp_path[256];
-    snprintf(tmp_path, sizeof(tmp_path), "/tmp/tt_chunk_%d_%d_XXXXXX",
-             (int)getpid(), ctx->worker_id);
-    int fd = mkstemp(tmp_path);
-    if (fd < 0)
-    {
-        /* Error: push sentinel with error */
-        tt_symbol_batch_t *sentinel = batch_alloc();
-        if (sentinel)
-        {
-            sentinel->is_sentinel = true;
-            sentinel->has_error = true;
-            sentinel->error_msg = tt_strdup("failed to create temp chunk file");
-            enqueue_batch(sentinel, ctx);
-        }
-        local_batch_destroy(&lb);
-        return NULL;
-    }
-
     tt_strbuf_t file_list;
     tt_strbuf_init(&file_list);
     for (int i = 0; i < ctx->file_count; i++)
@@ -1294,24 +1278,26 @@ static void *worker_fn(void *arg)
         tt_strbuf_append_char(&file_list, '/');
         tt_strbuf_append_str(&file_list, ctx->file_paths[i]);
     }
-    if (write(fd, file_list.data, file_list.len) < 0)
+
+    char prefix[32];
+    snprintf(prefix, sizeof(prefix), "tt_chunk_%d_%d",
+             tt_getpid(), ctx->worker_id);
+    char *tmp_path = tt_tmpfile_write(prefix, file_list.data, file_list.len);
+    tt_strbuf_free(&file_list);
+
+    if (!tmp_path)
     {
-        close(fd);
-        tt_strbuf_free(&file_list);
-        unlink(tmp_path);
         tt_symbol_batch_t *sentinel = batch_alloc();
         if (sentinel)
         {
             sentinel->is_sentinel = true;
             sentinel->has_error = true;
-            sentinel->error_msg = tt_strdup("failed to write file list to temp file");
+            sentinel->error_msg = tt_strdup("failed to create temp chunk file");
             enqueue_batch(sentinel, ctx);
         }
         local_batch_destroy(&lb);
-        return NULL;
+        return;
     }
-    close(fd);
-    tt_strbuf_free(&file_list);
 
     /* 2. Start ctags streaming */
     tt_ctags_stream_t stream;
@@ -1319,7 +1305,8 @@ static void *worker_fn(void *arg)
                                    ctx->ctags_timeout_sec);
     if (rc < 0)
     {
-        unlink(tmp_path);
+        tt_remove_file(tmp_path);
+        free(tmp_path);
         tt_symbol_batch_t *sentinel = batch_alloc();
         if (sentinel)
         {
@@ -1329,7 +1316,7 @@ static void *worker_fn(void *arg)
             enqueue_batch(sentinel, ctx);
         }
         local_batch_destroy(&lb);
-        return NULL;
+        return;
     }
 
     TT_DIAG("worker", "ctags_start",
@@ -1615,7 +1602,8 @@ static void *worker_fn(void *arg)
     /* Finish ctags stream */
     char *stderr_out = NULL;
     int exit_code = tt_ctags_stream_finish(&stream, &stderr_out);
-    unlink(tmp_path);
+    tt_remove_file(tmp_path);
+    free(tmp_path);
 
     TT_DIAG("worker", "done",
             "\"wid\":%d,\"files\":%d,\"syms\":%d,"
@@ -1650,7 +1638,6 @@ static void *worker_fn(void *arg)
 
     free(stderr_out);
     local_batch_destroy(&lb);
-    return NULL;
 }
 
 /* ===== Writer thread function ===== */
@@ -1669,7 +1656,7 @@ static void writer_add_error(writer_ctx_t *ctx, const char *msg)
     ctx->errors[ctx->error_count++] = tt_strdup(msg);
 }
 
-static void *writer_fn(void *arg)
+static void writer_fn(void *arg)
 {
     writer_ctx_t *ctx = (writer_ctx_t *)arg;
     int sentinels_received = 0;
@@ -1697,7 +1684,7 @@ static void *writer_fn(void *arg)
                 diag_starvation_start = tt_monotonic_ms();
             }
             diag_empty_polls++;
-            usleep(100); /* 100us yield */
+            tt_sleep_ms(1); /* yield to workers */
             continue;
         }
         if (result == MPSC_QUEUE_RETRY)
@@ -1823,8 +1810,6 @@ static void *writer_fn(void *arg)
     /* Signal completion so tt_pipeline_finished() returns true */
     if (ctx->finished)
         atomic_store(ctx->finished, 1);
-
-    return NULL;
 }
 
 /* ===== Pipeline API ===== */
@@ -2039,7 +2024,7 @@ int tt_pipeline_start(const tt_pipeline_config_t *config,
 
     /* Set up worker contexts */
     h->worker_ctxs = calloc((size_t)K, sizeof(worker_ctx_t));
-    h->worker_threads = calloc((size_t)K, sizeof(pthread_t));
+    h->worker_threads = calloc((size_t)K, sizeof(tt_thread_t));
     if (!h->worker_ctxs || !h->worker_threads)
     {
         free(h->worker_ctxs);
@@ -2116,7 +2101,7 @@ int tt_pipeline_start(const tt_pipeline_config_t *config,
     h->writer_ctx.finished = &h->finished;
 
     /* Launch writer thread */
-    if (pthread_create(&h->writer_thread, NULL, writer_fn, &h->writer_ctx) != 0)
+    if (tt_thread_create(&h->writer_thread, writer_fn, &h->writer_ctx) != 0)
     {
         free((void *)h->balanced_paths);
         free(h->worker_ctxs);
@@ -2141,8 +2126,8 @@ int tt_pipeline_start(const tt_pipeline_config_t *config,
             }
             continue;
         }
-        if (pthread_create(&h->worker_threads[w], NULL, worker_fn,
-                           &h->worker_ctxs[w]) != 0)
+        if (tt_thread_create(&h->worker_threads[w], worker_fn,
+                              &h->worker_ctxs[w]) != 0)
         {
             /* Fallback: push sentinel for failed thread */
             tt_symbol_batch_t *sentinel = batch_alloc();
@@ -2184,11 +2169,11 @@ int tt_pipeline_join(tt_pipeline_handle_t *handle,
     for (int w = 0; w < handle->num_workers; w++)
     {
         if (handle->worker_ctxs[w].file_count > 0)
-            pthread_join(handle->worker_threads[w], NULL);
+            tt_thread_join(handle->worker_threads[w]);
     }
 
     /* Join writer thread */
-    pthread_join(handle->writer_thread, NULL);
+    tt_thread_join(handle->writer_thread);
 
     /* Populate result */
     if (result)
@@ -2255,5 +2240,3 @@ void tt_pipeline_result_free(tt_pipeline_result_t *result)
     result->errors = NULL;
     result->errors_count = 0;
 }
-
-#endif /* !TT_PLATFORM_WINDOWS */

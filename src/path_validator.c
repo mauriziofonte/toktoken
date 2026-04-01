@@ -32,10 +32,10 @@ bool tt_path_validate(const char *path, const char *root)
     }
     else
     {
-        /* Check resolved_path starts with resolved_root + "/" */
+        /* Check resolved_path starts with resolved_root + separator */
         size_t rlen = strlen(resolved_root);
         if (strncmp(resolved_path, resolved_root, rlen) == 0 &&
-            resolved_path[rlen] == '/')
+            (resolved_path[rlen] == '/' || resolved_path[rlen] == '\\'))
         {
             valid = true;
         }

@@ -73,13 +73,45 @@ static void free_lines(char **lines, int count)
     free(lines);
 }
 
+/* ---- Platform-aware HOME override ---- */
+
+static void set_home_env(const char *dir)
+{
+#ifdef TT_PLATFORM_WINDOWS
+    setenv("USERPROFILE", dir, 1);
+#else
+    setenv("HOME", dir, 1);
+#endif
+}
+
+static void restore_home_env(const char *orig)
+{
+#ifdef TT_PLATFORM_WINDOWS
+    if (orig) setenv("USERPROFILE", orig, 1);
+    else      unsetenv("USERPROFILE");
+#else
+    if (orig) setenv("HOME", orig, 1);
+    else      unsetenv("HOME");
+#endif
+}
+
+static char *save_home_env(void)
+{
+#ifdef TT_PLATFORM_WINDOWS
+    const char *v = getenv("USERPROFILE");
+#else
+    const char *v = getenv("HOME");
+#endif
+    return v ? tt_strdup(v) : NULL;
+}
+
 /* ---- Tests ---- */
 
 TT_TEST(test_mcp_log_tool_call_creates_file)
 {
     char *tmpdir = tt_test_tmpdir();
-    char *orig_home = getenv("HOME") ? tt_strdup(getenv("HOME")) : NULL;
-    setenv("HOME", tmpdir, 1);
+    char *orig_home = save_home_env();
+    set_home_env(tmpdir);
 
     cJSON *args = cJSON_CreateObject();
     cJSON_AddStringToObject(args, "query", "test");
@@ -89,10 +121,7 @@ TT_TEST(test_mcp_log_tool_call_creates_file)
     char *path = mcp_log_path(tmpdir);
     TT_ASSERT_TRUE(tt_file_exists(path));
 
-    if (orig_home)
-        setenv("HOME", orig_home, 1);
-    else
-        unsetenv("HOME");
+    restore_home_env(orig_home);
     free(orig_home);
     free(path);
     tt_test_rmdir(tmpdir);
@@ -102,8 +131,8 @@ TT_TEST(test_mcp_log_tool_call_creates_file)
 TT_TEST(test_mcp_log_tool_call_format)
 {
     char *tmpdir = tt_test_tmpdir();
-    char *orig_home = getenv("HOME") ? tt_strdup(getenv("HOME")) : NULL;
-    setenv("HOME", tmpdir, 1);
+    char *orig_home = save_home_env();
+    set_home_env(tmpdir);
 
     cJSON *args = cJSON_CreateObject();
     cJSON_AddStringToObject(args, "query", "Controller");
@@ -116,6 +145,14 @@ TT_TEST(test_mcp_log_tool_call_format)
     char **lines = NULL;
     int count = read_jsonl_lines(path, &lines);
     TT_ASSERT_EQ_INT(1, count);
+    if (count < 1 || !lines) {
+        restore_home_env(orig_home);
+        free(orig_home);
+        free(path);
+        tt_test_rmdir(tmpdir);
+        free(tmpdir);
+        return;
+    }
 
     cJSON *entry = cJSON_Parse(lines[0]);
     TT_ASSERT_NOT_NULL(entry);
@@ -153,10 +190,7 @@ TT_TEST(test_mcp_log_tool_call_format)
     cJSON_Delete(entry);
     free_lines(lines, count);
 
-    if (orig_home)
-        setenv("HOME", orig_home, 1);
-    else
-        unsetenv("HOME");
+    restore_home_env(orig_home);
     free(orig_home);
     free(path);
     tt_test_rmdir(tmpdir);
@@ -166,8 +200,8 @@ TT_TEST(test_mcp_log_tool_call_format)
 TT_TEST(test_mcp_log_tool_call_failure)
 {
     char *tmpdir = tt_test_tmpdir();
-    char *orig_home = getenv("HOME") ? tt_strdup(getenv("HOME")) : NULL;
-    setenv("HOME", tmpdir, 1);
+    char *orig_home = save_home_env();
+    set_home_env(tmpdir);
 
     tt_mcp_log_tool_call("index_create", NULL, "/tmp/proj",
                          150, false, "No ctags binary found");
@@ -176,6 +210,14 @@ TT_TEST(test_mcp_log_tool_call_failure)
     char **lines = NULL;
     int count = read_jsonl_lines(path, &lines);
     TT_ASSERT_EQ_INT(1, count);
+    if (count < 1 || !lines) {
+        restore_home_env(orig_home);
+        free(orig_home);
+        free(path);
+        tt_test_rmdir(tmpdir);
+        free(tmpdir);
+        return;
+    }
 
     cJSON *entry = cJSON_Parse(lines[0]);
     TT_ASSERT_NOT_NULL(entry);
@@ -191,10 +233,7 @@ TT_TEST(test_mcp_log_tool_call_failure)
     cJSON_Delete(entry);
     free_lines(lines, count);
 
-    if (orig_home)
-        setenv("HOME", orig_home, 1);
-    else
-        unsetenv("HOME");
+    restore_home_env(orig_home);
     free(orig_home);
     free(path);
     tt_test_rmdir(tmpdir);
@@ -204,8 +243,8 @@ TT_TEST(test_mcp_log_tool_call_failure)
 TT_TEST(test_mcp_log_lifecycle_initialize)
 {
     char *tmpdir = tt_test_tmpdir();
-    char *orig_home = getenv("HOME") ? tt_strdup(getenv("HOME")) : NULL;
-    setenv("HOME", tmpdir, 1);
+    char *orig_home = save_home_env();
+    set_home_env(tmpdir);
 
     tt_mcp_log_lifecycle(TT_MCP_LOG_INITIALIZE, "/tmp/project",
                          "Claude Code 1.2.3");
@@ -214,6 +253,14 @@ TT_TEST(test_mcp_log_lifecycle_initialize)
     char **lines = NULL;
     int count = read_jsonl_lines(path, &lines);
     TT_ASSERT_EQ_INT(1, count);
+    if (count < 1 || !lines) {
+        restore_home_env(orig_home);
+        free(orig_home);
+        free(path);
+        tt_test_rmdir(tmpdir);
+        free(tmpdir);
+        return;
+    }
 
     cJSON *entry = cJSON_Parse(lines[0]);
     TT_ASSERT_NOT_NULL(entry);
@@ -231,10 +278,7 @@ TT_TEST(test_mcp_log_lifecycle_initialize)
     cJSON_Delete(entry);
     free_lines(lines, count);
 
-    if (orig_home)
-        setenv("HOME", orig_home, 1);
-    else
-        unsetenv("HOME");
+    restore_home_env(orig_home);
     free(orig_home);
     free(path);
     tt_test_rmdir(tmpdir);
@@ -244,8 +288,8 @@ TT_TEST(test_mcp_log_lifecycle_initialize)
 TT_TEST(test_mcp_log_lifecycle_shutdown)
 {
     char *tmpdir = tt_test_tmpdir();
-    char *orig_home = getenv("HOME") ? tt_strdup(getenv("HOME")) : NULL;
-    setenv("HOME", tmpdir, 1);
+    char *orig_home = save_home_env();
+    set_home_env(tmpdir);
 
     tt_mcp_log_lifecycle(TT_MCP_LOG_SHUTDOWN, "/tmp/project", NULL);
 
@@ -253,6 +297,14 @@ TT_TEST(test_mcp_log_lifecycle_shutdown)
     char **lines = NULL;
     int count = read_jsonl_lines(path, &lines);
     TT_ASSERT_EQ_INT(1, count);
+    if (count < 1 || !lines) {
+        restore_home_env(orig_home);
+        free(orig_home);
+        free(path);
+        tt_test_rmdir(tmpdir);
+        free(tmpdir);
+        return;
+    }
 
     cJSON *entry = cJSON_Parse(lines[0]);
     TT_ASSERT_NOT_NULL(entry);
@@ -266,10 +318,7 @@ TT_TEST(test_mcp_log_lifecycle_shutdown)
     cJSON_Delete(entry);
     free_lines(lines, count);
 
-    if (orig_home)
-        setenv("HOME", orig_home, 1);
-    else
-        unsetenv("HOME");
+    restore_home_env(orig_home);
     free(orig_home);
     free(path);
     tt_test_rmdir(tmpdir);
@@ -279,8 +328,8 @@ TT_TEST(test_mcp_log_lifecycle_shutdown)
 TT_TEST(test_mcp_log_append_multiple)
 {
     char *tmpdir = tt_test_tmpdir();
-    char *orig_home = getenv("HOME") ? tt_strdup(getenv("HOME")) : NULL;
-    setenv("HOME", tmpdir, 1);
+    char *orig_home = save_home_env();
+    set_home_env(tmpdir);
 
     tt_mcp_log_lifecycle(TT_MCP_LOG_INITIALIZE, "/tmp/p", "test 1.0");
     tt_mcp_log_tool_call("stats", NULL, "/tmp/p", 10, true, NULL);
@@ -290,6 +339,14 @@ TT_TEST(test_mcp_log_append_multiple)
     char **lines = NULL;
     int count = read_jsonl_lines(path, &lines);
     TT_ASSERT_EQ_INT(3, count);
+    if (count < 3 || !lines) {
+        restore_home_env(orig_home);
+        free(orig_home);
+        free(path);
+        tt_test_rmdir(tmpdir);
+        free(tmpdir);
+        return;
+    }
 
     /* Each line must be valid JSON */
     for (int i = 0; i < count; i++)
@@ -303,10 +360,7 @@ TT_TEST(test_mcp_log_append_multiple)
 
     free_lines(lines, count);
 
-    if (orig_home)
-        setenv("HOME", orig_home, 1);
-    else
-        unsetenv("HOME");
+    restore_home_env(orig_home);
     free(orig_home);
     free(path);
     tt_test_rmdir(tmpdir);

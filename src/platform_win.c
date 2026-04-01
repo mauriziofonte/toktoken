@@ -59,6 +59,14 @@ char *tt_realpath(const char *path)
         return NULL;
     }
 
+    /* Match POSIX realpath() contract: return NULL for non-existent paths.
+     * GetFullPathNameW resolves textually even for non-existent paths. */
+    if (GetFileAttributesW(wpath) == INVALID_FILE_ATTRIBUTES) {
+        tt_error_set("tt_realpath: path does not exist: %s", path);
+        free(wpath);
+        return NULL;
+    }
+
     DWORD len = GetFullPathNameW(wpath, 0, NULL, NULL);
     if (len == 0) {
         tt_error_set("tt_realpath: GetFullPathNameW failed for %s", path);

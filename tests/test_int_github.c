@@ -718,7 +718,11 @@ void run_int_github_tests(void)
 
     /* gh CLI checks (mock -- safe on CI) */
     TT_RUN(test_gh_not_found_via_path_override);
+#ifdef TT_PLATFORM_WINDOWS
+    TT_SKIP(test_gh_not_authenticated_via_fake_script, "fake gh script is POSIX-only");
+#else
     TT_RUN(test_gh_not_authenticated_via_fake_script);
+#endif
 
     /* gh CLI checks (require real gh authenticated) */
     if (on_ci) {

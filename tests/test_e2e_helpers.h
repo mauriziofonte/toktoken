@@ -13,6 +13,7 @@
 
 #ifdef TT_PLATFORM_WINDOWS
 #include <io.h>
+#include <windows.h> /* GetCurrentProcessId */
 #define access _access
 #define popen  _popen
 #define pclose _pclose
@@ -86,7 +87,7 @@ static inline int tt_e2e_run(const char *cmd_args, cJSON **out_json)
     if (!tmp) tmp = getenv("TMP");
     if (!tmp) tmp = ".";
     snprintf(stderr_capture, sizeof(stderr_capture),
-             "%s\\tt_e2e_err_%lu.txt", tmp, (unsigned long)_getpid());
+             "%s\\tt_e2e_err_%lu.txt", tmp, (unsigned long)GetCurrentProcessId());
 #else
     snprintf(stderr_capture, sizeof(stderr_capture),
              "/tmp/tt_e2e_err_%d.txt", (int)getpid());

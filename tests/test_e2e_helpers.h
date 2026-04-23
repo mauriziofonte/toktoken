@@ -74,20 +74,36 @@ static inline int tt_e2e_run(const char *cmd_args, cJSON **out_json)
 {
     const char *bin = tt_e2e_binary();
     if (!bin) {
+        fprintf(stderr, "[E2E] ERROR: toktoken binary not found\n");
         if (out_json) *out_json = NULL;
         return 127;
     }
 
+    /* Capture stderr to a tempfile so we can surface it on failure. */
+    char stderr_capture[512];
+#ifdef TT_PLATFORM_WINDOWS
+    const char *tmp = getenv("TEMP");
+    if (!tmp) tmp = getenv("TMP");
+    if (!tmp) tmp = ".";
+    snprintf(stderr_capture, sizeof(stderr_capture),
+             "%s\\tt_e2e_err_%lu.txt", tmp, (unsigned long)_getpid());
+#else
+    snprintf(stderr_capture, sizeof(stderr_capture),
+             "/tmp/tt_e2e_err_%d.txt", (int)getpid());
+#endif
+
     char cmd[2048];
 #ifdef TT_PLATFORM_WINDOWS
     /* Quote the binary path to survive spaces (e.g. runner workspaces). */
-    snprintf(cmd, sizeof(cmd), "\"%s\" %s 2>NUL", bin, cmd_args);
+    snprintf(cmd, sizeof(cmd), "\"%s\" %s 2>\"%s\"", bin, cmd_args, stderr_capture);
 #else
-    snprintf(cmd, sizeof(cmd), "%s %s 2>/dev/null", bin, cmd_args);
+    snprintf(cmd, sizeof(cmd), "%s %s 2>%s", bin, cmd_args, stderr_capture);
 #endif
 
     FILE *p = popen(cmd, "r");
     if (!p) {
+        fprintf(stderr, "[E2E] ERROR: popen failed for: %s\n", cmd);
+        remove(stderr_capture);
         if (out_json) *out_json = NULL;
         return -1;
     }
@@ -110,6 +126,27 @@ static inline int tt_e2e_run(const char *cmd_args, cJSON **out_json)
     if (out_json) {
         *out_json = cJSON_Parse(buf);
     }
+
+    /* Surface stderr when the binary crashed or produced no stdout — this is
+     * the only signal we have in CI when the real cause isn't in the assertion. */
+    if (exit_code != 0 && total == 0) {
+        fprintf(stderr, "[E2E] cmd: %s\n", cmd);
+        fprintf(stderr, "[E2E] exit_code: %d\n", exit_code);
+        FILE *sf = fopen(stderr_capture, "r");
+        if (sf) {
+            char serr[4096];
+            size_t sn = fread(serr, 1, sizeof(serr) - 1, sf);
+            serr[sn] = '\0';
+            fclose(sf);
+            if (sn > 0) {
+                fprintf(stderr, "[E2E] stderr: %s\n", serr);
+            } else {
+                fprintf(stderr, "[E2E] stderr: (empty)\n");
+            }
+        }
+        fflush(stderr);
+    }
+    remove(stderr_capture);
 
     return exit_code;
 }

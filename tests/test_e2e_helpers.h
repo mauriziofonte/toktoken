@@ -46,6 +46,13 @@ static inline const char *tt_e2e_binary(void)
     }
 
     const char *candidates[] = {
+#ifdef TT_PLATFORM_WINDOWS
+        "./toktoken.exe",
+        "./build/toktoken.exe",
+        "./build/debug/toktoken.exe",
+        "../build/toktoken.exe",
+        "../build/debug/toktoken.exe",
+#endif
         "./toktoken",
         "./build/toktoken",
         "./build/debug/toktoken",
@@ -73,7 +80,8 @@ static inline int tt_e2e_run(const char *cmd_args, cJSON **out_json)
 
     char cmd[2048];
 #ifdef TT_PLATFORM_WINDOWS
-    snprintf(cmd, sizeof(cmd), "%s %s 2>NUL", bin, cmd_args);
+    /* Quote the binary path to survive spaces (e.g. runner workspaces). */
+    snprintf(cmd, sizeof(cmd), "\"%s\" %s 2>NUL", bin, cmd_args);
 #else
     snprintf(cmd, sizeof(cmd), "%s %s 2>/dev/null", bin, cmd_args);
 #endif

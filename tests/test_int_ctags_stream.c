@@ -34,12 +34,31 @@ static const char *ctags_path(void)
 }
 
 /*
+ * get_tmpdir -- Return a platform-appropriate temp directory.
+ * On Windows/MSYS2, $TEMP/$TMP is typically set (e.g. D:\a\_temp\...).
+ * On POSIX, /tmp is the universal fallback.
+ */
+static const char *get_tmpdir(void)
+{
+    const char *d = getenv("TMPDIR");
+    if (d && *d) return d;
+    d = getenv("TEMP");
+    if (d && *d) return d;
+    d = getenv("TMP");
+    if (d && *d) return d;
+    return "/tmp";
+}
+
+/*
  * write_file_list -- Write an array of absolute paths to a temp file.
  * Returns [caller-frees] path to the temp file.
  */
 static char *write_file_list(const char *const *paths, int count)
 {
-    char *tmpfile_path = tt_strdup("/tmp/ctags_stream_test_XXXXXX");
+    char templ[1024];
+    snprintf(templ, sizeof(templ), "%s/ctags_stream_test_XXXXXX", get_tmpdir());
+
+    char *tmpfile_path = tt_strdup(templ);
     if (!tmpfile_path)
         return NULL;
 
@@ -82,6 +101,7 @@ TT_TEST(test_stream_basic_readline)
     const char *paths[] = {app_path, svc_path};
     char *file_list = write_file_list(paths, 2);
     TT_ASSERT_NOT_NULL(file_list);
+    if (!file_list) return;
 
     tt_ctags_stream_t stream;
     int rc = tt_ctags_stream_start(&stream, ctags, file_list, 30);
@@ -117,6 +137,7 @@ TT_TEST(test_stream_empty_file_list)
     /* Create empty temp file */
     char *file_list = write_file_list(NULL, 0);
     TT_ASSERT_NOT_NULL(file_list);
+    if (!file_list) return;
 
     tt_ctags_stream_t stream;
     int rc = tt_ctags_stream_start(&stream, ctags, file_list, 10);
@@ -145,6 +166,7 @@ TT_TEST(test_stream_stderr_capture)
     const char *paths[] = {"/nonexistent/path/to/file.php"};
     char *file_list = write_file_list(paths, 1);
     TT_ASSERT_NOT_NULL(file_list);
+    if (!file_list) return;
 
     tt_ctags_stream_t stream;
     int rc = tt_ctags_stream_start(&stream, ctags, file_list, 10);
@@ -204,6 +226,11 @@ TT_TEST(test_stream_timeout)
 
     char *file_list = write_file_list(abs_paths, 500);
     TT_ASSERT_NOT_NULL(file_list);
+    if (!file_list) {
+        tt_test_rmdir(tmpdir);
+        free(tmpdir);
+        return;
+    }
 
     /*
      * Set a very short timeout. ctags might finish quickly on a fast
@@ -277,6 +304,11 @@ TT_TEST(test_stream_large_output)
 
     char *file_list = write_file_list(abs_paths, 20);
     TT_ASSERT_NOT_NULL(file_list);
+    if (!file_list) {
+        tt_test_rmdir(tmpdir);
+        free(tmpdir);
+        return;
+    }
 
     tt_ctags_stream_t stream;
     int rc = tt_ctags_stream_start(&stream, ctags, file_list, 60);
@@ -337,6 +369,11 @@ TT_TEST(test_stream_line_buffer_growth)
     const char *paths[] = {abs_path};
     char *file_list = write_file_list(paths, 1);
     TT_ASSERT_NOT_NULL(file_list);
+    if (!file_list) {
+        tt_test_rmdir(tmpdir);
+        free(tmpdir);
+        return;
+    }
 
     tt_ctags_stream_t stream;
     int rc = tt_ctags_stream_start(&stream, ctags, file_list, 30);

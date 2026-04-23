@@ -1,5 +1,9 @@
 /*
- * test_e2e_helpers.h -- Helpers for E2E tests using popen.
+ * test_e2e_helpers.h -- Helpers for E2E tests.
+ *
+ * Uses tt_proc_run() (platform.h) which invokes CreateProcessW on Windows and
+ * fork/exec on POSIX, bypassing the shell entirely. This avoids cmd.exe's
+ * quote-stripping rules that corrupt commands with multiple quote pairs.
  */
 
 #ifndef TT_TEST_E2E_HELPERS_H
@@ -13,25 +17,14 @@
 
 #ifdef TT_PLATFORM_WINDOWS
 #include <io.h>
-#include <windows.h> /* GetCurrentProcessId */
 #define access _access
-#define popen  _popen
-#define pclose _pclose
 #ifndef X_OK
 #define X_OK 0 /* Windows: existence check only */
 #endif
 #else
 #include <unistd.h>
-#include <sys/wait.h>
 #endif
 
-/*
- * tt_e2e_run -- Run toktoken binary and capture stdout.
- *
- * cmd_args: arguments after "toktoken" (e.g. "index:create --path /tmp/x").
- * out_json: receives parsed cJSON (caller must cJSON_Delete). NULL if parse fails.
- * Returns exit code from pclose.
- */
 static inline const char *tt_e2e_binary(void)
 {
     static char path[512];
@@ -71,6 +64,60 @@ static inline const char *tt_e2e_binary(void)
     return NULL;
 }
 
+/*
+ * tt_e2e_tokenize -- Split cmd_args into argv tokens, respecting double quotes.
+ *
+ * argv[0] is populated with `bin`. Subsequent tokens come from cmd_args.
+ * Double quotes delimit tokens containing spaces; the quote characters
+ * themselves are stripped.
+ *
+ * Returns argc on success. argv[argc] is set to NULL.
+ */
+static inline int tt_e2e_tokenize(const char *bin, const char *cmd_args,
+                                   const char **argv, int argv_max,
+                                   char *store, size_t store_size)
+{
+    int argc = 0;
+    if (argc < argv_max) argv[argc++] = bin;
+
+    size_t sp = 0;
+    const char *p = cmd_args;
+    while (*p && argc < argv_max - 1) {
+        while (*p == ' ' || *p == '\t') p++;
+        if (!*p) break;
+
+        argv[argc++] = &store[sp];
+        char quote_ch = 0; /* 0 = not in quote, otherwise holds '"' or '\'' */
+        while (*p && (quote_ch || (*p != ' ' && *p != '\t'))) {
+            if (*p == '"' || *p == '\'') {
+                if (!quote_ch) {
+                    quote_ch = *p;
+                    p++;
+                    continue;
+                }
+                if (quote_ch == *p) {
+                    quote_ch = 0;
+                    p++;
+                    continue;
+                }
+                /* Different quote char inside: treat as literal */
+            }
+            if (sp < store_size - 1) store[sp++] = *p;
+            p++;
+        }
+        if (sp < store_size - 1) store[sp++] = '\0';
+    }
+    argv[argc] = NULL;
+    return argc;
+}
+
+/*
+ * tt_e2e_run -- Run toktoken binary and capture stdout.
+ *
+ * cmd_args: arguments after "toktoken" (e.g. "index:create --path /tmp/x").
+ * out_json: receives parsed cJSON (caller must cJSON_Delete). NULL if parse fails.
+ * Returns exit code. Returns 127 if binary not found, -1 on spawn failure.
+ */
 static inline int tt_e2e_run(const char *cmd_args, cJSON **out_json)
 {
     const char *bin = tt_e2e_binary();
@@ -80,84 +127,33 @@ static inline int tt_e2e_run(const char *cmd_args, cJSON **out_json)
         return 127;
     }
 
-    /* Capture stderr to a tempfile so we can surface it on failure. */
-    char stderr_capture[512];
-#ifdef TT_PLATFORM_WINDOWS
-    const char *tmp = getenv("TEMP");
-    if (!tmp) tmp = getenv("TMP");
-    if (!tmp) tmp = ".";
-    snprintf(stderr_capture, sizeof(stderr_capture),
-             "%s\\tt_e2e_err_%lu.txt", tmp, (unsigned long)GetCurrentProcessId());
-#else
-    snprintf(stderr_capture, sizeof(stderr_capture),
-             "/tmp/tt_e2e_err_%d.txt", (int)getpid());
-#endif
+    const char *argv[64];
+    char argstore[4096];
+    int argc = tt_e2e_tokenize(bin, cmd_args, argv, 64, argstore, sizeof(argstore));
+    (void)argc;
 
-    char cmd[2048];
-#ifdef TT_PLATFORM_WINDOWS
-    /* cmd.exe treats '/' as switch separator: "./build/toktoken.exe" becomes
-     * command='.' with switches '/build' and '/toktoken.exe'. Convert slashes
-     * to backslashes in the binary path before passing to popen. */
-    char bin_win[512];
-    size_t bi;
-    for (bi = 0; bin[bi] && bi < sizeof(bin_win) - 1; bi++) {
-        bin_win[bi] = (bin[bi] == '/') ? '\\' : bin[bi];
-    }
-    bin_win[bi] = '\0';
-    /* Quote the binary path to survive spaces (e.g. runner workspaces). */
-    snprintf(cmd, sizeof(cmd), "\"%s\" %s 2>\"%s\"", bin_win, cmd_args, stderr_capture);
-#else
-    snprintf(cmd, sizeof(cmd), "%s %s 2>%s", bin, cmd_args, stderr_capture);
-#endif
-
-    FILE *p = popen(cmd, "r");
-    if (!p) {
-        fprintf(stderr, "[E2E] ERROR: popen failed for: %s\n", cmd);
-        remove(stderr_capture);
-        if (out_json) *out_json = NULL;
-        return -1;
-    }
-
-    char buf[65536];
-    size_t total = 0;
-    size_t n;
-    while ((n = fread(buf + total, 1, sizeof(buf) - total - 1, p)) > 0) {
-        total += n;
-    }
-    buf[total] = '\0';
-
-    int status = pclose(p);
-#ifdef TT_PLATFORM_WINDOWS
-    int exit_code = status; /* pclose returns exit code directly on Windows */
-#else
-    int exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
-#endif
+    tt_proc_result_t r = tt_proc_run(argv, NULL, 0);
 
     if (out_json) {
-        *out_json = cJSON_Parse(buf);
+        *out_json = (r.stdout_buf && *r.stdout_buf) ? cJSON_Parse(r.stdout_buf) : NULL;
     }
 
-    /* Surface stderr when the binary crashed or produced no stdout — this is
-     * the only signal we have in CI when the real cause isn't in the assertion. */
-    if (exit_code != 0 && total == 0) {
-        fprintf(stderr, "[E2E] cmd: %s\n", cmd);
-        fprintf(stderr, "[E2E] exit_code: %d\n", exit_code);
-        FILE *sf = fopen(stderr_capture, "r");
-        if (sf) {
-            char serr[4096];
-            size_t sn = fread(serr, 1, sizeof(serr) - 1, sf);
-            serr[sn] = '\0';
-            fclose(sf);
-            if (sn > 0) {
-                fprintf(stderr, "[E2E] stderr: %s\n", serr);
-            } else {
-                fprintf(stderr, "[E2E] stderr: (empty)\n");
-            }
+    /* Surface diagnostic when the binary failed without producing JSON output. */
+    int has_stdout = r.stdout_buf && *r.stdout_buf;
+    if (r.exit_code != 0 && !has_stdout) {
+        fprintf(stderr, "[E2E] bin: %s\n", bin);
+        fprintf(stderr, "[E2E] args: %s\n", cmd_args);
+        fprintf(stderr, "[E2E] exit_code: %d\n", r.exit_code);
+        if (r.stderr_buf && *r.stderr_buf) {
+            fprintf(stderr, "[E2E] stderr: %s\n", r.stderr_buf);
+        } else {
+            fprintf(stderr, "[E2E] stderr: (empty)\n");
         }
         fflush(stderr);
     }
-    remove(stderr_capture);
 
+    int exit_code = r.exit_code;
+    tt_proc_result_free(&r);
     return exit_code;
 }
 

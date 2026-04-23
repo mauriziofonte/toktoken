@@ -95,8 +95,17 @@ static inline int tt_e2e_run(const char *cmd_args, cJSON **out_json)
 
     char cmd[2048];
 #ifdef TT_PLATFORM_WINDOWS
+    /* cmd.exe treats '/' as switch separator: "./build/toktoken.exe" becomes
+     * command='.' with switches '/build' and '/toktoken.exe'. Convert slashes
+     * to backslashes in the binary path before passing to popen. */
+    char bin_win[512];
+    size_t bi;
+    for (bi = 0; bin[bi] && bi < sizeof(bin_win) - 1; bi++) {
+        bin_win[bi] = (bin[bi] == '/') ? '\\' : bin[bi];
+    }
+    bin_win[bi] = '\0';
     /* Quote the binary path to survive spaces (e.g. runner workspaces). */
-    snprintf(cmd, sizeof(cmd), "\"%s\" %s 2>\"%s\"", bin, cmd_args, stderr_capture);
+    snprintf(cmd, sizeof(cmd), "\"%s\" %s 2>\"%s\"", bin_win, cmd_args, stderr_capture);
 #else
     snprintf(cmd, sizeof(cmd), "%s %s 2>%s", bin, cmd_args, stderr_capture);
 #endif

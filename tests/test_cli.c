@@ -289,6 +289,16 @@ TT_TEST(test_cli_long_value_lines)
     tt_cli_opts_free(&opts);
 }
 
+TT_TEST(test_cli_long_bool_members)
+{
+    tt_cli_opts_t opts;
+    int rc;
+    PARSE("--members");
+    TT_ASSERT_EQ_INT(0, rc);
+    TT_ASSERT(opts.members, "--members sets the flag");
+    tt_cli_opts_free(&opts);
+}
+
 TT_TEST(test_cli_long_value_grep)
 {
     tt_cli_opts_t opts;
@@ -1164,6 +1174,7 @@ void run_cli_tests(void)
     TT_RUN(test_cli_long_value_depth);
     TT_RUN(test_cli_long_value_max_files);
     TT_RUN(test_cli_long_value_lines);
+    TT_RUN(test_cli_long_bool_members);
     TT_RUN(test_cli_long_value_grep);
     TT_RUN(test_cli_long_value_group_by);
     TT_RUN(test_cli_long_value_sort);

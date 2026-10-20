@@ -440,6 +440,102 @@ TT_TEST(test_text_inspect_symbol_grep_no_match)
     free(out);
 }
 
+/* ---------- --members: one row per member of a type symbol ---------- */
+
+TT_TEST(test_text_inspect_symbol_members_struct)
+{
+    c_ensure_index();
+    if (!g_c_indexed) return;
+
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd),
+             "inspect:symbol src/widget.h::Widget#class -o text --members --path %s",
+             g_c_fixture);
+
+    char *out = NULL;
+    tt_e2e_run_raw(cmd, &out);
+    TT_ASSERT_NOT_NULL(out);
+    if (!out) return;
+
+    TT_ASSERT_STR_CONTAINS(out, "// src/widget.h:5-10 class Widget [member: 4]\n");
+    TT_ASSERT_STR_CONTAINS(out, "6: int width\n");
+    TT_ASSERT_STR_CONTAINS(out, "8: int (*draw)(struct Widget *w, const char *label)\n");
+    TT_ASSERT_STR_CONTAINS(out, "9: char name[32]\n");
+    /* the typedef wrapper and the braces are gone */
+    TT_ASSERT(!strstr(out, "typedef"), "no typedef wrapper in member rows");
+    free(out);
+}
+
+TT_TEST(test_text_inspect_symbol_members_enum)
+{
+    c_ensure_index();
+    if (!g_c_indexed) return;
+
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd),
+             "inspect:symbol src/widget.h::Mode#enum -o text --members --path %s",
+             g_c_fixture);
+
+    char *out = NULL;
+    tt_e2e_run_raw(cmd, &out);
+    TT_ASSERT_NOT_NULL(out);
+    if (!out) return;
+
+    TT_ASSERT_STR_CONTAINS(out, "[member: 2]");
+    TT_ASSERT_STR_CONTAINS(out, "13: MODE_IDLE\n");
+    TT_ASSERT_STR_CONTAINS(out, "14: MODE_ACTIVE\n");
+    free(out);
+}
+
+/* Multi-line declarations join, nested bodies collapse, comments and
+ * preprocessor lines disappear, and line numbers stay true to the file. */
+TT_TEST(test_text_inspect_symbol_members_multiline_and_nesting)
+{
+    c_ensure_index();
+    if (!g_c_indexed) return;
+
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd),
+             "inspect:symbol src/widget.h::Config#class -o text --members --path %s",
+             g_c_fixture);
+
+    char *out = NULL;
+    tt_e2e_run_raw(cmd, &out);
+    TT_ASSERT_NOT_NULL(out);
+    if (!out) return;
+
+    TT_ASSERT_STR_CONTAINS(out, "[member: 6]");
+    TT_ASSERT_STR_CONTAINS(out, "23: int retries\n");
+    TT_ASSERT_STR_CONTAINS(out, "26: struct {...} bounds\n");
+    TT_ASSERT_STR_CONTAINS(out,
+        "30: int (*on_error)(struct Config *c, int code, const char *msg)\n");
+    TT_ASSERT_STR_CONTAINS(out, "36: char tag[8]\n");
+    TT_ASSERT(!strstr(out, "declaration split across lines"), "comments dropped");
+    TT_ASSERT(!strstr(out, "ifdef"), "preprocessor lines dropped");
+    free(out);
+}
+
+/* --members only applies to type symbols; a function renders as usual. */
+TT_TEST(test_text_inspect_symbol_members_skipped_for_function)
+{
+    c_ensure_index();
+    if (!g_c_indexed) return;
+
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd),
+             "inspect:symbol src/widget.c::widget_reset#function -o text --members --path %s",
+             g_c_fixture);
+
+    char *out = NULL;
+    tt_e2e_run_raw(cmd, &out);
+    TT_ASSERT_NOT_NULL(out);
+    if (!out) return;
+
+    TT_ASSERT(!strstr(out, "[member:"), "function kind is not member-scanned");
+    TT_ASSERT_STR_CONTAINS(out, "int widget_reset(Widget *w)\n");
+    free(out);
+}
+
 void run_e2e_text_format_tests(void)
 {
     TT_RUN(test_text_search_symbols_lines);
@@ -460,4 +556,8 @@ void run_e2e_text_format_tests(void)
     TT_RUN(test_text_inspect_symbol_grep);
     TT_RUN(test_text_inspect_symbol_grep_alternatives);
     TT_RUN(test_text_inspect_symbol_grep_no_match);
+    TT_RUN(test_text_inspect_symbol_members_struct);
+    TT_RUN(test_text_inspect_symbol_members_enum);
+    TT_RUN(test_text_inspect_symbol_members_multiline_and_nesting);
+    TT_RUN(test_text_inspect_symbol_members_skipped_for_function);
 }

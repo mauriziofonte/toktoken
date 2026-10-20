@@ -73,6 +73,7 @@ search.
 - `--token-budget N` -- hard cap on response token size
 - `--kind function,method,class` -- filter by symbol type
 - `--defs name1 name2` on search:symbols -- exact-name definitions only, no members or header prototypes
+- `--members` on inspect:symbol -- one row per struct/enum member instead of the full source
 
 Other flags: `--filter` (include path), `--group-by file` (text search),
 `--no-comments` (drop blank/comment lines with `-o text`),

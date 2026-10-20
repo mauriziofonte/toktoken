@@ -42,11 +42,36 @@ char *tt_render_search_text_text(const cJSON *result, bool no_comments);
  * With grep_pat, only the matching body lines are printed, each with its
  * real file line number, and the header records "[grep: K of N lines]".
  * With no_comments, blank and comment-only body lines are dropped.
+ * With members, a type symbol (class, struct, enum, ...) is rendered as
+ * one row per member instead of its full source, with "[member: N]".
  */
 char *tt_render_inspect_symbol_text(const cJSON *result, bool no_comments,
-                                    const char *grep_pat);
+                                    const char *grep_pat, bool members);
 
 /* inspect:file -> "N: line" using the file's real line numbers. */
 char *tt_render_inspect_file_text(const cJSON *result, bool no_comments);
+
+/*
+ * One member declaration split out of a C-family type body.
+ */
+typedef struct {
+    char *decl;   /* joined, whitespace-collapsed, nested bodies as "{...}" */
+    int line;     /* file line the declaration starts on */
+} tt_member_t;
+
+/*
+ * Heuristic scanner for C-family type bodies (struct, union, class, enum,
+ * interface). Finds the outermost brace block and splits it into member
+ * declarations: comments and preprocessor lines are skipped, multi-line
+ * declarations are joined into one row, and nested blocks are collapsed
+ * to "{...}". Declarations end at ';' (or at ',' when comma_sep is set,
+ * which is how enums are written). start_line is the file line the source
+ * begins on, so each row keeps its real line number.
+ *
+ * Returns NULL when the source has no body. [caller-frees: free each decl
+ * and the array itself]
+ */
+tt_member_t *tt_scan_members(const char *source, int start_line,
+                             bool comma_sep, int *out_count);
 
 #endif /* TT_TEXT_RENDER_H */

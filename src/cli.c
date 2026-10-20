@@ -74,6 +74,7 @@ static const flag_def_t flag_table[] = {
     BOOL_FLAG('X', "diagnostic",     diagnostic),
     BOOL_FLAG( 0,  "no-comments",    no_comments),
     BOOL_FLAG( 0,  "defs",           defs),
+    BOOL_FLAG( 0,  "members",        members),
     STR_FLAG ( 0,  "grep",           grep),
     BOOL_FLAG('a', "all",            all),
     BOOL_FLAG( 0,  "confirm",        confirm),

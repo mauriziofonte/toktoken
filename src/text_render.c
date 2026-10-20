@@ -211,16 +211,327 @@ static bool line_matches_grep(const char *line, const char *patterns)
     return false;
 }
 
+/* True when a scanned declaration is only an access specifier such as "public:". */
+static bool decl_is_access_specifier(const char *decl)
+{
+    static const char *words[] = { "public", "private", "protected", "signals", "slots", NULL };
+    size_t len = strlen(decl);
+    if (len < 2 || decl[len - 1] != ':')
+        return false;
+
+    for (int i = 0; words[i]; i++)
+    {
+        size_t wl = strlen(words[i]);
+        if (len - 1 == wl && strncmp(decl, words[i], wl) == 0)
+            return true;
+    }
+    return false;
+}
+
+/* Append a trimmed declaration to the output array. Empty ones are dropped. */
+static void push_member(tt_member_t **out, int *cap, int *n, tt_strbuf_t *cur, int cur_line)
+{
+    char *raw = tt_strbuf_detach(cur);
+    if (!raw)
+        return;
+
+    char *start = raw;
+    while (*start && isspace((unsigned char)*start))
+        start++;
+    size_t len = strlen(start);
+    while (len > 0 && isspace((unsigned char)start[len - 1]))
+        len--;
+
+    if (len == 0 || (start[0] == '{' && len == 5))
+    {
+        free(raw);
+        return;
+    }
+
+    if (decl_is_access_specifier(start))
+    {
+        free(raw);
+        return;
+    }
+
+    char *decl = tt_strndup(start, len);
+    free(raw);
+    if (!decl)
+        return;
+
+    if (*n >= *cap)
+    {
+        int newcap = *cap ? *cap * 2 : 8;
+        tt_member_t *grown = realloc(*out, (size_t)newcap * sizeof(tt_member_t));
+        if (!grown)
+        {
+            free(decl);
+            return;
+        }
+        *out = grown;
+        *cap = newcap;
+    }
+
+    (*out)[*n].decl = decl;
+    (*out)[*n].line = cur_line;
+    (*n)++;
+}
+
+tt_member_t *tt_scan_members(const char *source, int start_line, bool comma_sep,
+                             int *out_count)
+{
+    if (out_count)
+        *out_count = 0;
+    if (!source)
+        return NULL;
+
+    tt_member_t *out = NULL;
+    int cap = 0;
+    int n = 0;
+
+    tt_strbuf_t cur;
+    tt_strbuf_init(&cur);
+
+    int line = start_line > 0 ? start_line : 1;
+    int cur_line = line;
+    int depth = 0;         /* (), [] nesting; 0 means top level of the body */
+    bool in_body = false;
+    bool started = false;  /* the current declaration has a non-space token */
+
+    const char *p = source;
+    while (*p)
+    {
+        char c = *p;
+
+        if (c == '\n')
+        {
+            line++;
+            if (started && cur.len > 0 && cur.data && cur.data[cur.len - 1] != ' ')
+                tt_strbuf_append_char(&cur, ' ');
+            p++;
+            continue;
+        }
+
+        if (c == '/' && p[1] == '/')
+        {
+            while (*p && *p != '\n')
+                p++;
+            continue;
+        }
+
+        if (c == '/' && p[1] == '*')
+        {
+            p += 2;
+            while (*p && !(*p == '*' && p[1] == '/'))
+            {
+                if (*p == '\n')
+                    line++;
+                p++;
+            }
+            if (*p)
+                p += 2;
+            continue;
+        }
+
+        /* preprocessor line, including backslash continuations */
+        if (c == '#' && !started)
+        {
+            while (*p && *p != '\n')
+            {
+                if (*p == '\\' && p[1] == '\n')
+                {
+                    line++;
+                    p += 2;
+                    continue;
+                }
+                p++;
+            }
+            continue;
+        }
+
+        if (!in_body)
+        {
+            if (c == '{')
+            {
+                in_body = true;
+                depth = 0;
+            }
+            p++;
+            continue;
+        }
+
+        /* nested block: collapse the whole thing to "{...}" */
+        if (c == '{')
+        {
+            int nest = 1;
+            int block_line = line;
+            p++;
+            while (*p && nest > 0)
+            {
+                if (*p == '{')
+                    nest++;
+                else if (*p == '}')
+                    nest--;
+                else if (*p == '\n')
+                    line++;
+                if (nest > 0)
+                    p++;
+            }
+            if (*p == '}')
+                p++;
+            if (!started)
+            {
+                cur_line = block_line;
+                started = true;
+            }
+            tt_strbuf_append_str(&cur, "{...}");
+            continue;
+        }
+
+        /* end of the type body */
+        if (c == '}')
+            break;
+
+        /* string and character literals are copied verbatim */
+        if (c == '"' || c == '\'')
+        {
+            char q = c;
+            if (!started)
+            {
+                cur_line = line;
+                started = true;
+            }
+            tt_strbuf_append_char(&cur, c);
+            p++;
+            while (*p && *p != q)
+            {
+                if (*p == '\\' && p[1])
+                {
+                    if (p[1] == '\n')
+                        line++;
+                    tt_strbuf_append_char(&cur, *p);
+                    tt_strbuf_append_char(&cur, p[1]);
+                    p += 2;
+                    continue;
+                }
+                if (*p == '\n')
+                {
+                    line++;
+                    p++;
+                    continue;
+                }
+                tt_strbuf_append_char(&cur, *p);
+                p++;
+            }
+            if (*p)
+            {
+                tt_strbuf_append_char(&cur, *p);
+                p++;
+            }
+            continue;
+        }
+
+        if (c == '(' || c == '[' || c == ')' || c == ']')
+        {
+            if (!started)
+            {
+                cur_line = line;
+                started = true;
+            }
+            if (c == '(' || c == '[')
+                depth++;
+            else if (depth > 0)
+                depth--;
+            tt_strbuf_append_char(&cur, c);
+            p++;
+            continue;
+        }
+
+        if (c == ';' || (comma_sep && c == ',' && depth == 0))
+        {
+            push_member(&out, &cap, &n, &cur, cur_line);
+            started = false;
+            p++;
+            continue;
+        }
+
+        if (isspace((unsigned char)c))
+        {
+            if (started && cur.len > 0 && cur.data && cur.data[cur.len - 1] != ' ')
+                tt_strbuf_append_char(&cur, ' ');
+            p++;
+            continue;
+        }
+
+        if (!started)
+        {
+            cur_line = line;
+            started = true;
+        }
+        tt_strbuf_append_char(&cur, c);
+        p++;
+    }
+
+    /* a trailing declaration without its terminator (enum's last value) */
+    push_member(&out, &cap, &n, &cur, cur_line);
+    tt_strbuf_free(&cur);
+
+    if (out_count)
+        *out_count = n;
+    return out;
+}
+
+/* True when --members applies to a symbol of this kind. */
+static bool kind_has_members(const char *kind)
+{
+    static const char *kinds[] = { "class", "struct", "union", "enum",
+                                   "type", "interface", "trait", NULL };
+    if (!kind)
+        return false;
+
+    for (int i = 0; kinds[i]; i++)
+    {
+        if (strcmp(kind, kinds[i]) == 0)
+            return true;
+    }
+    return false;
+}
+
+/* Render a type symbol as one row per member: "LINE: declaration". */
+static void append_members_as_text(tt_strbuf_t *sb, const char *file, int line,
+                                   int end, const char *kind, const char *name,
+                                   const char *source)
+{
+    int count = 0;
+    bool comma_sep = kind && strcmp(kind, "enum") == 0;
+    tt_member_t *members = tt_scan_members(source, line, comma_sep, &count);
+
+    if (end > line)
+        tt_strbuf_appendf(sb, "// %s:%d-%d %s %s", file, line, end, kind, name);
+    else
+        tt_strbuf_appendf(sb, "// %s:%d %s %s", file, line, kind, name);
+    tt_strbuf_appendf(sb, " [member: %d]\n", count);
+
+    for (int i = 0; i < count; i++)
+        tt_strbuf_appendf(sb, "%d: %s\n", members[i].line, members[i].decl);
+
+    for (int i = 0; i < count; i++)
+        free(members[i].decl);
+    free(members);
+}
+
 /*
  * Append one symbol as "// file:line-end kind name" followed by its source.
  *
  * With no_comments, blank and comment-only lines are dropped. With
  * grep_pat, only the body lines matching the (pipe-separated,
  * case-insensitive) pattern are printed, each with its real file line
- * number, and the header records the cut as "[grep: K of N lines]".
+ * number, and the header records the cut as "[grep: K of N lines]". With
+ * members, a type symbol is reduced to one row per member.
  */
 static void append_symbol_as_text(tt_strbuf_t *sb, const cJSON *item,
-                                  bool no_comments, const char *grep_pat)
+                                  bool no_comments, const char *grep_pat,
+                                  bool members)
 {
     const char *file = text_get_str(item, "file", NULL);
     const char *kind = text_get_str(item, "kind", NULL);
@@ -232,6 +543,12 @@ static void append_symbol_as_text(tt_strbuf_t *sb, const cJSON *item,
         source = text_get_str(item, "src", NULL);
 
     bool filtering = no_comments || (grep_pat && grep_pat[0]);
+
+    if (members && kind_has_members(kind) && source[0])
+    {
+        append_members_as_text(sb, file, line, end, kind, name, source);
+        return;
+    }
 
     int total = 0;
     char **lines = NULL;
@@ -307,7 +624,7 @@ static void append_symbol_as_text(tt_strbuf_t *sb, const cJSON *item,
  * symbol in "symbols"; misses in "errors" print as "// not found: <id>".
  */
 char *tt_render_inspect_symbol_text(const cJSON *result, bool no_comments,
-                                    const char *grep_pat)
+                                    const char *grep_pat, bool members)
 {
     if (!result || cJSON_GetObjectItem(result, "error"))
         return NULL;
@@ -320,11 +637,11 @@ char *tt_render_inspect_symbol_text(const cJSON *result, bool no_comments,
     {
         const cJSON *item = NULL;
         cJSON_ArrayForEach(item, symbols)
-            append_symbol_as_text(&sb, item, no_comments, grep_pat);
+            append_symbol_as_text(&sb, item, no_comments, grep_pat, members);
     }
     else
     {
-        append_symbol_as_text(&sb, result, no_comments, grep_pat);
+        append_symbol_as_text(&sb, result, no_comments, grep_pat, members);
     }
 
     const cJSON *errs = cJSON_GetObjectItem(result, "errors");

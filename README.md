@@ -182,6 +182,7 @@ Used with `inspect:file`, `inspect:tree`, and `inspect:bundle`.
 | ----- | ---- | -------- | ----------- |
 | | `--lines` | `<start-end>` | Return only a specific line range from `inspect:file`. Example: `--lines 10-50` returns lines 10 through 50. |
 | | `--grep` | `<pat>` | With `-o text` on `inspect:symbol`, print only the body lines matching the pattern. Case-insensitive, pipe-separated alternatives. Each line keeps its real file line number and the header records the cut as `[grep: K of N lines]`. |
+| | `--members` | | With `-o text` on `inspect:symbol`, reduce a type symbol (`class`, `struct`, `union`, `enum`, `type`, `interface`, `trait`) to one row per member instead of its full source: `LINE: declaration`, with the count in the header as `[member: N]`. Multi-line declarations are joined, nested bodies collapse to `{...}`, and comments and preprocessor lines are dropped. |
 | `-d` | `--depth` | `<n>` | Limit directory depth for `inspect:tree`. Example: `-d 2` shows only top-level and one level of subdirectories. |
 
 #### Global options
@@ -269,6 +270,13 @@ toktoken inspect:symbol "src/widget.c::widget_draw#function" -o text --grep "cla
 # // src/widget.c:17-25 function widget_draw [grep: 2 of 9 lines]
 # 22:     int len = clamp((int)strlen(label), 0, w->width);
 # 23:     memcpy(w->name, label, len);
+
+toktoken inspect:symbol "src/widget.h::Widget#class" -o text --members
+# // src/widget.h:5-10 class Widget [member: 4]
+# 6: int width
+# 7: int height
+# 8: int (*draw)(struct Widget *w, const char *label)
+# 9: char name[32]
 ```
 
 Line shapes:

@@ -131,6 +131,7 @@ static void print_usage(void)
             "Inspect options:\n"
             "      --lines <start-end>  Line range for inspect:file\n"
             "      --grep <pat>       Keep only matching body lines (inspect:symbol, -o text)\n"
+            "      --members          One row per member of a type symbol (inspect:symbol, -o text)\n"
             "  -d, --depth <n>        Tree depth / blast radius depth\n"
             "      --include-callers  Include callers in bundle output\n"
             "      --cross-dir        Show only cross-directory cycles\n"

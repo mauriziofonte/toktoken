@@ -1421,7 +1421,8 @@ int tt_cmd_inspect_symbol(tt_cli_opts_t *opts)
     /* Text format: source blocks with a "// file:line kind name" header */
     if (tt_text_format_requested(opts))
     {
-        char *text = tt_render_inspect_symbol_text(result, opts->no_comments, opts->grep);
+        char *text = tt_render_inspect_symbol_text(result, opts->no_comments, opts->grep,
+                                                   opts->members);
         if (text)
         {
             fputs(text, stdout);

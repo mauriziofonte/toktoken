@@ -319,12 +319,17 @@ toktoken inspect:symbol "src/Auth.php::Auth.login#method"
 toktoken inspect:symbol "src/Auth.php::Auth.login#method" --context 5
 toktoken inspect:symbol "src/a.c::widget_draw#function" -o text --grep "clamp|memcpy"
 toktoken inspect:symbol "src/a.c::big_fn#function" -o text --grep return --no-comments
+toktoken inspect:symbol "src/a.h::Widget#class" -o text --members
 ```
 
 With `-o text`, `--grep <pat>` prints only the body lines that match the
 pattern (case-insensitive, `|`-separated alternatives), each with its real
 file line number, and the header records the cut as
-`[grep: K of N lines]`. JSON output is unaffected.
+`[grep: K of N lines]`. With `--members`, a type symbol (`class`, `struct`,
+`union`, `enum`, `type`, `interface`, `trait`) is reduced to one row per
+member (`LINE: declaration`) with `[member: N]` in the header; multi-line
+declarations join, nested bodies collapse to `{...}`, and comments and
+preprocessor lines are dropped. JSON output is unaffected.
 
 #### inspect:bundle
 

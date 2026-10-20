@@ -117,6 +117,7 @@ static void print_usage(void)
             "  -s, --case-sensitive   Case-sensitive search\n"
             "  -D, --debug            Show scoring breakdown\n"
             "      --no-sig           Omit signatures from results\n"
+            "      --defs             Exact-name definitions only (search:symbols)\n"
             "      --no-summary       Omit summaries from results\n"
             "      --detail <level>   Detail: compact, standard (default), full\n"
             "      --token-budget <n> Max token budget for results\n"

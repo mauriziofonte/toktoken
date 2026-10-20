@@ -72,6 +72,7 @@ search.
 - `--limit N` -- always cap search results (10-15 for discovery, 5 for targeted)
 - `--token-budget N` -- hard cap on response token size
 - `--kind function,method,class` -- filter by symbol type
+- `--defs name1 name2` on search:symbols -- exact-name definitions only, no members or header prototypes
 
 Other flags: `--filter` (include path), `--group-by file` (text search),
 `--no-comments` (drop blank/comment lines with `-o text`),

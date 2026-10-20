@@ -172,6 +172,7 @@ Used with `search:symbols` and `search:text`.
 | `-D` | `--debug` | | Include per-field scoring breakdown in `search:symbols` results. Shows how name, signature, summary, and qualified_name contribute to the final score. |
 | | `--no-sig` | | Omit symbol signatures from results. Reduces output size for discovery queries where only names and locations matter. |
 | | `--no-summary` | | Omit symbol summaries from results. Combine with `--no-sig` for minimal output. |
+| | `--defs` | | `search:symbols` only: resolve exact names instead of running a fuzzy search. Accepts several names in one call. Keeps real definitions and drops struct members, parameters, and header prototypes whose body is indexed in a source file. Names with nothing left are listed in `not_found`. |
 
 #### Inspect options
 
@@ -207,6 +208,9 @@ Available for all commands.
 ```bash
 # Search symbols, compact + count only
 toktoken search:symbols "auth" -cn
+
+# Resolve exact definitions by name, as one cheap call
+toktoken search:symbols widget_draw widget_reset --defs -o text
 
 # Search functions in Python, limit 20, compact
 toktoken search:symbols "parse" -ck function -L python -l20
@@ -290,6 +294,33 @@ The line numbers still match the file, so a dropped comment never shifts
 them. Block comments are tracked across lines, which keeps a dereference
 such as `*p = 0;` while dropping the comment around it. Preprocessor
 directives are not comments and are kept.
+
+## Definition Lookup
+
+`--defs` turns `search:symbols` into an exact-name definition lookup. Pass
+several names in one call and get back only the definitions, without the
+noise a fuzzy search returns around them.
+
+```bash
+toktoken search:symbols widget_draw widget_reset nope --defs -o text
+# src/widget.c:17:function widget_draw
+# src/widget.c:27:function widget_reset
+# // not found: nope
+# n=2
+```
+
+What it drops, per name:
+
+- struct members and parameters (`variable`, `property`, and any qualified
+  name such as `Widget.draw` or `widget_draw.label`) when the name itself
+  has a real definition;
+- header prototypes when the same name is defined in a source file, so a
+  `.h` declaration and its `.c` body are not both paid for. A type that
+  only exists in a header is kept — it is the definition.
+
+Names left with nothing are reported in `not_found` (JSON) or as
+`// not found: <name>` (text). Combine with `-o text` and `--kind` for the
+cheapest way to pin down a symbol before an `inspect:symbol`.
 
 ## Diagnostic Mode
 

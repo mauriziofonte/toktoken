@@ -255,6 +255,7 @@ toktoken search:symbols "auth" --no-sig --no-summary
 toktoken search:symbols "handler" --language go
 toktoken search:symbols "cache" --detail compact
 toktoken search:symbols "auth" --token-budget 2000
+toktoken search:symbols widget_draw widget_reset --defs -o text
 toktoken search:symbols "validator" --scope-imports-of src/Auth.php
 toktoken search:symbols "handler" --scope-importers-of src/Events/Dispatcher.php
 ```
@@ -279,6 +280,7 @@ toktoken search:symbols "handler" --scope-importers-of src/Events/Dispatcher.php
 | `--token-budget <n>` | Stop returning results once cumulative token estimate exceeds N |
 | `--scope-imports-of <file>` | Restrict results to symbols imported by the given file |
 | `--scope-importers-of <file>` | Restrict results to symbols found in files that import the given file |
+| `--defs` | Exact-name definitions only. Takes several names per call. Drops members/parameters and header prototypes when a real definition exists; misses go in `not_found` |
 
 #### search:text
 

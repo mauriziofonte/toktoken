@@ -155,6 +155,7 @@ if(BUILD_TESTS)
         tests/test_path_validator.c
         tests/test_secret_patterns.c
         tests/test_output_fmt.c
+        tests/test_text_render.c
         tests/test_json_output.c
         tests/test_edge_cases.c
         tests/test_jinja_strip.c

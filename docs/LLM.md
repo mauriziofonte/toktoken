@@ -393,6 +393,14 @@ toktoken inspect:file src/a.c --lines 10-20 -o text    # N: line
 `--count` and `--group-by` have no grep equivalent and keep JSON. The JSON
 contract is unchanged, so MCP clients and scripts are unaffected.
 
+Add `--no-comments` with `-o text` to drop blank lines and comment-only
+lines from `inspect:symbol`, `inspect:file`, and `search:text` context.
+Line numbers still match the file, and hit lines are never dropped.
+
+```bash
+toktoken inspect:file src/a.c --lines 10-20 -o text --no-comments
+```
+
 ---
 
 ## Workflow Patterns

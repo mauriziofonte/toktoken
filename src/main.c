@@ -141,6 +141,7 @@ static void print_usage(void)
             "  -e, --exclude <pat>    Exclude files matching pattern\n"
             "  -l, --limit <n>        Max results\n"
             "  -c, --compact          Compact JSON output\n"
+            "      --no-comments      Drop blank and comment lines (with -o text)\n"
             "  -u, --unique           Deduplicate results\n"
             "  -S, --sort <field>     Sort order (default: score)\n"
             "  -t, --truncate <n>     Truncate width (default: 120, min: 20)\n"

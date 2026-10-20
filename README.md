@@ -194,6 +194,7 @@ Available for all commands.
 | `-e` | `--exclude` | `<pattern>` | Exclude files whose path matches this pattern. Pipe-separated for OR: `-e "vendor\|node_modules"`. Case-insensitive. |
 | `-l` | `--limit` | `<n>` | Cap the number of results returned. Applies to all search and list commands. |
 | `-c` | `--compact` | | Compact JSON output. Removes whitespace and shortens field names, reducing response size by ~47%. Recommended for AI agent usage. |
+| | `--no-comments` | | With `-o text`, drop blank lines and lines that contain only a C-family comment. Applies to `inspect:symbol`, `inspect:file`, and the context lines of `search:text`; hit lines and real line numbers are kept. |
 | `-u` | `--unique` | | Deduplicate results by symbol name. |
 | `-S` | `--sort` | `<field>` | Sort results by the given field. Default: `score` (relevance). Other options depend on the command. |
 | `-t` | `--truncate` | `<n>` | Truncate output lines to `n` characters. Default: 120. Minimum: 20. |
@@ -273,6 +274,22 @@ Both searches end with `n=<count>`. Modes with no grep equivalent
 (`--count`, `--group-by`) keep JSON output. The JSON contract itself is
 unchanged: `text` is a rendering of the same result, so MCP clients,
 savings tracking and scripts that parse JSON are unaffected.
+
+Add `--no-comments` to drop blank lines and lines that hold only a
+C-family comment:
+
+```bash
+toktoken inspect:file src/widget.c --lines 14-25 -o text --no-comments
+# 17: int widget_draw(Widget *w, const char *label)
+# 18: {
+# 20:     if (!w || !label)
+# 21:         return -1;
+```
+
+The line numbers still match the file, so a dropped comment never shifts
+them. Block comments are tracked across lines, which keeps a dereference
+such as `*p = 0;` while dropping the comment around it. Preprocessor
+directives are not comments and are kept.
 
 ## Diagnostic Mode
 

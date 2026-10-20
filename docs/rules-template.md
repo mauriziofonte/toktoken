@@ -74,6 +74,7 @@ search.
 - `--kind function,method,class` -- filter by symbol type
 
 Other flags: `--filter` (include path), `--group-by file` (text search),
+`--no-comments` (drop blank/comment lines with `-o text`),
 `--count` (count-only), `--context N` (lines around matches),
 `--no-sig --no-summary` (minimal search output), `--sort name|file|line`,
 `--scope-imports-of <file>`, `--scope-importers-of <file>`,

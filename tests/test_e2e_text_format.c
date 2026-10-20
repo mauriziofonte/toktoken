@@ -377,6 +377,69 @@ TT_TEST(test_defs_requires_a_name)
     }
 }
 
+/* ---------- --grep: keep only matching body lines ---------- */
+
+TT_TEST(test_text_inspect_symbol_grep)
+{
+    c_ensure_index();
+    if (!g_c_indexed) return;
+
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd),
+             "inspect:symbol src/widget.c::widget_draw#function -o text --grep clamp --path %s",
+             g_c_fixture);
+
+    char *out = NULL;
+    tt_e2e_run_raw(cmd, &out);
+    TT_ASSERT_NOT_NULL(out);
+    if (!out) return;
+
+    TT_ASSERT_STR_CONTAINS(out, "[grep: 1 of 9 lines]");
+    TT_ASSERT_STR_CONTAINS(out, "22:     int len = clamp((int)strlen(label), 0, w->width);\n");
+    TT_ASSERT_STR_NOT_CONTAINS(out, "return len;");
+    free(out);
+}
+
+TT_TEST(test_text_inspect_symbol_grep_alternatives)
+{
+    c_ensure_index();
+    if (!g_c_indexed) return;
+
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd),
+             "inspect:symbol src/widget.c::widget_draw#function -o text "
+             "--grep \"clamp|memcpy\" --path %s", g_c_fixture);
+
+    char *out = NULL;
+    tt_e2e_run_raw(cmd, &out);
+    TT_ASSERT_NOT_NULL(out);
+    if (!out) return;
+
+    TT_ASSERT_STR_CONTAINS(out, "[grep: 2 of 9 lines]");
+    TT_ASSERT_STR_CONTAINS(out, "23:     memcpy(w->name, label, len);\n");
+    free(out);
+}
+
+/* A pattern that matches nothing still reports the symbol it looked at. */
+TT_TEST(test_text_inspect_symbol_grep_no_match)
+{
+    c_ensure_index();
+    if (!g_c_indexed) return;
+
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd),
+             "inspect:symbol src/widget.c::widget_draw#function -o text --grep zzz --path %s",
+             g_c_fixture);
+
+    char *out = NULL;
+    tt_e2e_run_raw(cmd, &out);
+    TT_ASSERT_NOT_NULL(out);
+    if (!out) return;
+
+    TT_ASSERT_STR_CONTAINS(out, "// src/widget.c:17-25 function widget_draw [grep: 0 of 9 lines]\n");
+    free(out);
+}
+
 void run_e2e_text_format_tests(void)
 {
     TT_RUN(test_text_search_symbols_lines);
@@ -394,4 +457,7 @@ void run_e2e_text_format_tests(void)
     TT_RUN(test_defs_several_names_and_not_found);
     TT_RUN(test_defs_keeps_header_only_definition);
     TT_RUN(test_defs_requires_a_name);
+    TT_RUN(test_text_inspect_symbol_grep);
+    TT_RUN(test_text_inspect_symbol_grep_alternatives);
+    TT_RUN(test_text_inspect_symbol_grep_no_match);
 }

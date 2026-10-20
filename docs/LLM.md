@@ -317,7 +317,14 @@ toktoken inspect:outline src/Controller.php --no-sig --no-summary
 ```bash
 toktoken inspect:symbol "src/Auth.php::Auth.login#method"
 toktoken inspect:symbol "src/Auth.php::Auth.login#method" --context 5
+toktoken inspect:symbol "src/a.c::widget_draw#function" -o text --grep "clamp|memcpy"
+toktoken inspect:symbol "src/a.c::big_fn#function" -o text --grep return --no-comments
 ```
+
+With `-o text`, `--grep <pat>` prints only the body lines that match the
+pattern (case-insensitive, `|`-separated alternatives), each with its real
+file line number, and the header records the cut as
+`[grep: K of N lines]`. JSON output is unaffected.
 
 #### inspect:bundle
 

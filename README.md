@@ -181,6 +181,7 @@ Used with `inspect:file`, `inspect:tree`, and `inspect:bundle`.
 | Short | Long | Argument | Description |
 | ----- | ---- | -------- | ----------- |
 | | `--lines` | `<start-end>` | Return only a specific line range from `inspect:file`. Example: `--lines 10-50` returns lines 10 through 50. |
+| | `--grep` | `<pat>` | With `-o text` on `inspect:symbol`, print only the body lines matching the pattern. Case-insensitive, pipe-separated alternatives. Each line keeps its real file line number and the header records the cut as `[grep: K of N lines]`. |
 | `-d` | `--depth` | `<n>` | Limit directory depth for `inspect:tree`. Example: `-d 2` shows only top-level and one level of subdirectories. |
 
 #### Global options
@@ -263,6 +264,11 @@ toktoken inspect:file src/widget.c --lines 17-20 -o text
 # 18: {
 # 19:     /* nothing to draw */
 # 20:     if (!w || !label)
+
+toktoken inspect:symbol "src/widget.c::widget_draw#function" -o text --grep "clamp|memcpy"
+# // src/widget.c:17-25 function widget_draw [grep: 2 of 9 lines]
+# 22:     int len = clamp((int)strlen(label), 0, w->width);
+# 23:     memcpy(w->name, label, len);
 ```
 
 Line shapes:

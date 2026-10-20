@@ -1354,8 +1354,53 @@ static int text_get_int(const cJSON *item, const char *key, int def)
     return (int)n->valuedouble;
 }
 
-/* Append one symbol as "// file:line-end kind name" followed by its source. */
-static void append_symbol_as_text(tt_strbuf_t *sb, const cJSON *item, bool no_comments)
+/* True when the line contains any pipe-separated alternative (case-insensitive). */
+static bool line_matches_grep(const char *line, const char *patterns)
+{
+    if (!patterns || !patterns[0])
+        return true;
+
+    const char *p = patterns;
+    while (*p)
+    {
+        const char *bar = strchr(p, '|');
+        size_t len = bar ? (size_t)(bar - p) : strlen(p);
+
+        while (len > 0 && isspace((unsigned char)p[0]))
+        {
+            p++;
+            len--;
+        }
+        while (len > 0 && isspace((unsigned char)p[len - 1]))
+            len--;
+
+        if (len > 0)
+        {
+            char *pat = tt_strndup(p, len);
+            bool hit = pat && tt_str_contains_ci(line, pat);
+            free(pat);
+            if (hit)
+                return true;
+        }
+
+        if (!bar)
+            break;
+        p = bar + 1;
+    }
+    return false;
+}
+
+/*
+ * Append one symbol as "// file:line-end kind name" followed by its source.
+ *
+ * With no_comments, blank and comment-only lines are dropped. With
+ * grep_pat, only the body lines matching the (pipe-separated,
+ * case-insensitive) pattern are printed, each with its real file line
+ * number, and the header records how many survived as
+ * "[grep: K of N lines]".
+ */
+static void append_symbol_as_text(tt_strbuf_t *sb, const cJSON *item,
+                                  bool no_comments, const char *grep_pat)
 {
     const char *file = text_get_str(item, "file");
     const char *kind = text_get_str(item, "kind");
@@ -1366,35 +1411,74 @@ static void append_symbol_as_text(tt_strbuf_t *sb, const cJSON *item, bool no_co
     if (!source[0])
         source = text_get_str(item, "src");
 
-    if (end > line)
-        tt_strbuf_appendf(sb, "// %s:%d-%d %s %s\n", file, line, end, kind, name);
-    else
-        tt_strbuf_appendf(sb, "// %s:%d %s %s\n", file, line, kind, name);
+    bool filtering = no_comments || (grep_pat && grep_pat[0]);
 
-    if (!source[0])
-        return;
+    int total = 0;
+    char **lines = NULL;
+    bool *show = NULL;
+    int shown = 0;
 
-    if (!no_comments)
+    if (source[0])
     {
-        tt_strbuf_append_str(sb, source);
-        if (source[strlen(source) - 1] != '\n')
-            tt_strbuf_append_char(sb, '\n');
+        lines = tt_str_split(source, '\n', &total);
+        if (lines && total > 0 && lines[total - 1] && lines[total - 1][0] == '\0')
+            total--; /* trailing newline, not a real line */
+
+        if (lines && filtering)
+        {
+            show = calloc((size_t)(total > 0 ? total : 1), sizeof(bool));
+            bool in_block = false;
+            for (int i = 0; i < total; i++)
+            {
+                const char *ln = lines[i] ? lines[i] : "";
+                bool keep = true;
+                if (no_comments && tt_line_is_comment_or_blank(ln, &in_block))
+                    keep = false;
+                if (keep && grep_pat && grep_pat[0] && !line_matches_grep(ln, grep_pat))
+                    keep = false;
+                if (show)
+                    show[i] = keep;
+                if (keep)
+                    shown++;
+            }
+        }
+        else if (lines)
+        {
+            shown = total;
+        }
+    }
+
+    if (end > line)
+        tt_strbuf_appendf(sb, "// %s:%d-%d %s %s", file, line, end, kind, name);
+    else
+        tt_strbuf_appendf(sb, "// %s:%d %s %s", file, line, kind, name);
+
+    if (grep_pat && grep_pat[0])
+        tt_strbuf_appendf(sb, " [grep: %d of %d lines]", shown, total);
+
+    tt_strbuf_append_char(sb, '\n');
+
+    if (!lines)
+    {
+        free(show);
         return;
     }
 
-    int n = 0;
-    char **lines = tt_str_split(source, '\n', &n);
-    if (!lines)
-        return;
-    bool in_block = false;
-    for (int i = 0; i < n; i++)
+    for (int i = 0; i < total; i++)
     {
         const char *ln = lines[i] ? lines[i] : "";
-        if (tt_line_is_comment_or_blank(ln, &in_block))
+        if (filtering && show && !show[i])
             continue;
-        tt_strbuf_append_str(sb, ln);
-        tt_strbuf_append_char(sb, '\n');
+        if (grep_pat && grep_pat[0])
+            tt_strbuf_appendf(sb, "%d: %s\n", line + i, ln);
+        else
+        {
+            tt_strbuf_append_str(sb, ln);
+            tt_strbuf_append_char(sb, '\n');
+        }
     }
+
+    free(show);
     tt_str_split_free(lines);
 }
 
@@ -1408,7 +1492,8 @@ static void append_symbol_as_text(tt_strbuf_t *sb, const cJSON *item, bool no_co
  * Handles both the flat single-symbol shape and the batch shape.
  * [caller-frees]
  */
-static char *render_inspect_symbol_as_text(const cJSON *result, bool no_comments)
+static char *render_inspect_symbol_as_text(const cJSON *result, bool no_comments,
+                                           const char *grep_pat)
 {
     if (!result || cJSON_GetObjectItem(result, "error"))
         return NULL;
@@ -1421,11 +1506,11 @@ static char *render_inspect_symbol_as_text(const cJSON *result, bool no_comments
     {
         const cJSON *item = NULL;
         cJSON_ArrayForEach(item, symbols)
-            append_symbol_as_text(&sb, item, no_comments);
+            append_symbol_as_text(&sb, item, no_comments, grep_pat);
     }
     else
     {
-        append_symbol_as_text(&sb, result, no_comments);
+        append_symbol_as_text(&sb, result, no_comments, grep_pat);
     }
 
     const cJSON *errs = cJSON_GetObjectItem(result, "errors");
@@ -1576,7 +1661,7 @@ int tt_cmd_inspect_symbol(tt_cli_opts_t *opts)
     /* Text format: source blocks with a "// file:line kind name" header */
     if (inspect_fmt_is_text(opts))
     {
-        char *text = render_inspect_symbol_as_text(result, opts->no_comments);
+        char *text = render_inspect_symbol_as_text(result, opts->no_comments, opts->grep);
         if (text)
         {
             fputs(text, stdout);

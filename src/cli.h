@@ -106,6 +106,9 @@ typedef struct
     /* --defs (search:symbols: exact-name definitions only) */
     bool defs;
 
+    /* --grep <pat> (inspect:symbol: keep only matching body lines) */
+    const char *grep;
+
     /* Progress callback (set by MCP layer, NULL for CLI) */
     void (*progress_cb)(void *ctx, int64_t done, int64_t total);
     void *progress_ctx;

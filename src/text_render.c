@@ -303,6 +303,30 @@ static bool decl_is_access_specifier(const char *decl)
     return false;
 }
 
+/*
+ * True when the text collected so far is a C++ section label such as
+ * "public" or "private:". Bitfields ("int x : 3") do not match.
+ */
+static bool pending_is_access_specifier(const tt_strbuf_t *cur)
+{
+    static const char *words[] = { "public", "private", "protected", "signals", "slots", NULL };
+    if (!cur || !cur->data)
+        return false;
+
+    const char *s = cur->data;
+    while (*s && isspace((unsigned char)*s))
+        s++;
+    size_t len = strlen(s);
+    while (len > 0 && (isspace((unsigned char)s[len - 1]) || s[len - 1] == ':'))
+        len--;
+
+    for (int i = 0; words[i]; i++)
+        if (len == strlen(words[i]) && strncmp(s, words[i], len) == 0)
+            return true;
+
+    return false;
+}
+
 /* Append a trimmed declaration to the output array. Empty ones are dropped. */
 static void push_member(tt_member_t **out, int *cap, int *n, tt_strbuf_t *cur, int cur_line)
 {
@@ -518,6 +542,15 @@ tt_member_t *tt_scan_members(const char *source, int start_line, bool comma_sep,
             else if (depth > 0)
                 depth--;
             tt_strbuf_append_char(&cur, c);
+            p++;
+            continue;
+        }
+
+        if (c == ':' && depth == 0 && started && pending_is_access_specifier(&cur))
+        {
+            /* "public:" opens a section; the label itself is not a member */
+            free(tt_strbuf_detach(&cur));
+            started = false;
             p++;
             continue;
         }

@@ -1325,6 +1325,139 @@ cJSON *tt_cmd_inspect_tree_exec(tt_cli_opts_t *opts)
  * CLI wrappers
  * ================================================================ */
 
+/* ================================================================
+ * --format text: grep-style agent-line output
+ *
+ * Rendered from the JSON result returned by the _exec() functions, so
+ * the exec path, the MCP layer and savings tracking stay unchanged.
+ * ================================================================ */
+
+/* True when --format text was requested. */
+static bool inspect_fmt_is_text(const tt_cli_opts_t *opts)
+{
+    return opts && opts->format && strcmp(opts->format, "text") == 0;
+}
+
+/* Borrow a string field, "" when absent. */
+static const char *text_get_str(const cJSON *item, const char *key)
+{
+    const char *v = cJSON_GetStringValue(cJSON_GetObjectItem(item, key));
+    return v ? v : "";
+}
+
+/* Borrow a numeric field as int, def when absent. */
+static int text_get_int(const cJSON *item, const char *key, int def)
+{
+    const cJSON *n = cJSON_GetObjectItem(item, key);
+    if (!n || !cJSON_IsNumber(n))
+        return def;
+    return (int)n->valuedouble;
+}
+
+/* Append one symbol as "// file:line-end kind name" followed by its source. */
+static void append_symbol_as_text(tt_strbuf_t *sb, const cJSON *item)
+{
+    const char *file = text_get_str(item, "file");
+    const char *kind = text_get_str(item, "kind");
+    const char *name = text_get_str(item, "name");
+    int line = text_get_int(item, "line", text_get_int(item, "l", 0));
+    int end = text_get_int(item, "end", text_get_int(item, "e", 0));
+    const char *source = text_get_str(item, "source");
+    if (!source[0])
+        source = text_get_str(item, "src");
+
+    if (end > line)
+        tt_strbuf_appendf(sb, "// %s:%d-%d %s %s\n", file, line, end, kind, name);
+    else
+        tt_strbuf_appendf(sb, "// %s:%d %s %s\n", file, line, kind, name);
+
+    if (source && source[0])
+    {
+        tt_strbuf_append_str(sb, source);
+        if (source[strlen(source) - 1] != '\n')
+            tt_strbuf_append_char(sb, '\n');
+    }
+}
+
+/*
+ * Render an inspect:symbol result as source blocks.
+ *
+ *   // file:line-end kind name
+ *   <source>
+ *   // not found: <id>   for ids the index does not know
+ *
+ * Handles both the flat single-symbol shape and the batch shape.
+ * [caller-frees]
+ */
+static char *render_inspect_symbol_as_text(const cJSON *result)
+{
+    if (!result || cJSON_GetObjectItem(result, "error"))
+        return NULL;
+
+    tt_strbuf_t sb;
+    tt_strbuf_init(&sb);
+
+    const cJSON *symbols = cJSON_GetObjectItem(result, "symbols");
+    if (symbols && cJSON_IsArray(symbols))
+    {
+        const cJSON *item = NULL;
+        cJSON_ArrayForEach(item, symbols)
+            append_symbol_as_text(&sb, item);
+    }
+    else
+    {
+        append_symbol_as_text(&sb, result);
+    }
+
+    const cJSON *errs = cJSON_GetObjectItem(result, "errors");
+    if (errs && cJSON_IsArray(errs))
+    {
+        const cJSON *e = NULL;
+        cJSON_ArrayForEach(e, errs)
+            tt_strbuf_appendf(&sb, "// not found: %s\n", text_get_str(e, "id"));
+    }
+
+    return tt_strbuf_detach(&sb);
+}
+
+/*
+ * Render an inspect:file result as numbered lines "N: line".
+ * Line numbers come from the returned range, so they match the file.
+ * [caller-frees]
+ */
+static char *render_inspect_file_as_text(const cJSON *result)
+{
+    const char *content = text_get_str(result, "content");
+    if (!content[0])
+        return NULL;
+
+    int start = 1;
+    const cJSON *range = cJSON_GetObjectItem(result, "range");
+    if (range && cJSON_IsArray(range) && cJSON_GetArraySize(range) >= 1)
+    {
+        const cJSON *first = cJSON_GetArrayItem(range, 0);
+        if (first && cJSON_IsNumber(first))
+            start = (int)first->valuedouble;
+    }
+    if (start < 1)
+        start = 1;
+
+    int line_count = 0;
+    char **lines = tt_str_split(content, '\n', &line_count);
+    if (!lines)
+        return NULL;
+
+    tt_strbuf_t sb;
+    tt_strbuf_init(&sb);
+    for (int i = 0; i < line_count; i++)
+        tt_strbuf_appendf(&sb, "%d: %s\n", start + i, lines[i] ? lines[i] : "");
+
+    tt_str_split_free(lines);
+    return tt_strbuf_detach(&sb);
+}
+
+/* ---- CLI wrappers ---- */
+
 int tt_cmd_inspect_outline(tt_cli_opts_t *opts)
 {
     cJSON *result = tt_cmd_inspect_outline_exec(opts);
@@ -1415,6 +1548,20 @@ int tt_cmd_inspect_symbol(tt_cli_opts_t *opts)
         return exit_code;
     }
 
+    /* Text format: source blocks with a "// file:line kind name" header */
+    if (inspect_fmt_is_text(opts))
+    {
+        char *text = render_inspect_symbol_as_text(result);
+        if (text)
+        {
+            fputs(text, stdout);
+            fflush(stdout);
+            free(text);
+            cJSON_Delete(result);
+            return exit_code;
+        }
+    }
+
     /* JSON output */
     if (cJSON_GetObjectItem(result, "error"))
     {
@@ -1443,6 +1590,19 @@ int tt_cmd_inspect_file(tt_cli_opts_t *opts)
         tt_json_print(result);
         cJSON_Delete(result);
         return 1;
+    }
+
+    if (inspect_fmt_is_text(opts))
+    {
+        char *text = render_inspect_file_as_text(result);
+        if (text)
+        {
+            fputs(text, stdout);
+            fflush(stdout);
+            free(text);
+            cJSON_Delete(result);
+            return 0;
+        }
     }
 
     tt_json_print(result);

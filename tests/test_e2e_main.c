@@ -19,6 +19,7 @@ extern void run_e2e_full_find_tests(void);
 extern void run_e2e_full_langs_tests(void);
 extern void run_e2e_full_imports_tests(void);
 extern void run_e2e_full_manage_tests(void);
+extern void run_e2e_text_format_tests(void);
 
 int main(void)
 {
@@ -54,6 +55,9 @@ int main(void)
 
     TT_SUITE("E2E Full: Imports");
     run_e2e_full_imports_tests();
+
+    TT_SUITE("E2E Text Format");
+    run_e2e_text_format_tests();
 
     /* Manage MUST be last -- cache:clear destroys the index */
     TT_SUITE("E2E Full: Manage");

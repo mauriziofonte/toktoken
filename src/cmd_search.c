@@ -1104,6 +1104,152 @@ cJSON *tt_cmd_search_text_exec(tt_cli_opts_t *opts)
     return result;
 }
 
+/* ================================================================
+ * --format text: grep-style agent-line output
+ *
+ * Rendered from the JSON result returned by the _exec() functions, so
+ * the exec path, the MCP layer and savings tracking stay unchanged.
+ * Modes that have no grep equivalent (--count, --group-by) keep JSON.
+ * ================================================================ */
+
+/* True when --format text was requested. */
+static bool opts_format_is_text(const tt_cli_opts_t *opts)
+{
+    return opts && opts->format && strcmp(opts->format, "text") == 0;
+}
+
+/* Borrow a string field, trying the long key first then the short one. */
+static const char *text_get_str(const cJSON *item, const char *key, const char *alt)
+{
+    const char *v = cJSON_GetStringValue(cJSON_GetObjectItem(item, key));
+    if (!v && alt)
+        v = cJSON_GetStringValue(cJSON_GetObjectItem(item, alt));
+    return v ? v : "";
+}
+
+/* Borrow a numeric field as int, 0 when absent. */
+static int text_get_int(const cJSON *item, const char *key, int def)
+{
+    const cJSON *n = cJSON_GetObjectItem(item, key);
+    if (!n || !cJSON_IsNumber(n))
+        return def;
+    return (int)n->valuedouble;
+}
+
+/*
+ * Render a search:text result as grep-style lines.
+ *
+ *   file:line:text          hit line
+ *   file-line-text          context line ('-' like grep's separator)
+ *   n=<count>               trailer
+ *
+ * Returns NULL when the result has no "results" array (--count, --group-by),
+ * in which case the caller keeps JSON output. [caller-frees]
+ */
+static char *render_search_text_as_text(const cJSON *result)
+{
+    const cJSON *items = cJSON_GetObjectItem(result, "results");
+    if (!items || !cJSON_IsArray(items))
+        return NULL;
+
+    tt_strbuf_t sb;
+    tt_strbuf_init(&sb);
+
+    const cJSON *item = NULL;
+    cJSON_ArrayForEach(item, items)
+    {
+        const char *f = text_get_str(item, "f", "file");
+        int line = text_get_int(item, "l", 0);
+        const char *t = text_get_str(item, "t", "text");
+
+        const cJSON *before = cJSON_GetObjectItem(item, "before");
+        if (before && cJSON_IsArray(before))
+        {
+            int bn = cJSON_GetArraySize(before);
+            for (int i = 0; i < bn; i++)
+            {
+                const char *b = cJSON_GetStringValue(cJSON_GetArrayItem(before, i));
+                tt_strbuf_appendf(&sb, "%s-%d-%s\n", f, line - (bn - i), b ? b : "");
+            }
+        }
+
+        tt_strbuf_appendf(&sb, "%s:%d:%s\n", f, line, t);
+
+        const cJSON *after = cJSON_GetObjectItem(item, "after");
+        if (after && cJSON_IsArray(after))
+        {
+            int an = cJSON_GetArraySize(after);
+            for (int i = 0; i < an; i++)
+            {
+                const char *a = cJSON_GetStringValue(cJSON_GetArrayItem(after, i));
+                tt_strbuf_appendf(&sb, "%s-%d-%s\n", f, line + i + 1, a ? a : "");
+            }
+        }
+    }
+
+    tt_strbuf_appendf(&sb, "n=%d\n", text_get_int(result, "n", cJSON_GetArraySize(items)));
+    return tt_strbuf_detach(&sb);
+}
+
+/*
+ * True when the symbol id can be rebuilt from the printed fields.
+ *
+ * IDs are "{file}::{qualified_name}#{kind}", so "file::name#kind" is
+ * derivable from the file, kind and name already on the line.
+ */
+static bool symbol_id_derivable(const char *id, const char *file,
+                                const char *kind, const char *name)
+{
+    if (!id || !id[0])
+        return true;
+
+    tt_strbuf_t expected;
+    tt_strbuf_init(&expected);
+    tt_strbuf_appendf(&expected, "%s::%s#%s", file ? file : "",
+                      name ? name : "", kind ? kind : "");
+
+    bool derivable = expected.data && strcmp(expected.data, id) == 0;
+    tt_strbuf_free(&expected);
+    return derivable;
+}
+
+/*
+ * Render a search:symbols result as one agent line per symbol.
+ *
+ *   file:line:kind name       id omitted when derivable from the line
+ *   file:line:kind name id=X  id printed when it carries extra information
+ *   n=<count>                 trailer
+ *
+ * Returns NULL when there is no "results" array. [caller-frees]
+ */
+static char *render_search_symbols_as_text(const cJSON *result)
+{
+    const cJSON *items = cJSON_GetObjectItem(result, "results");
+    if (!items || !cJSON_IsArray(items))
+        return NULL;
+
+    tt_strbuf_t sb;
+    tt_strbuf_init(&sb);
+
+    const cJSON *item = NULL;
+    cJSON_ArrayForEach(item, items)
+    {
+        const char *f = text_get_str(item, "file", "f");
+        const char *kind = text_get_str(item, "kind", "k");
+        const char *name = text_get_str(item, "name", "n");
+        const char *id = text_get_str(item, "id", NULL);
+        int line = text_get_int(item, "line", text_get_int(item, "l", 0));
+
+        if (symbol_id_derivable(id, f, kind, name))
+            tt_strbuf_appendf(&sb, "%s:%d:%s %s\n", f, line, kind, name);
+        else
+            tt_strbuf_appendf(&sb, "%s:%d:%s %s id=%s\n", f, line, kind, name, id);
+    }
+
+    tt_strbuf_appendf(&sb, "n=%d\n", text_get_int(result, "n", cJSON_GetArraySize(items)));
+    return tt_strbuf_detach(&sb);
+}
+
 /* ---- CLI wrappers ---- */
 
 int tt_cmd_search_symbols(tt_cli_opts_t *opts)
@@ -1122,6 +1268,19 @@ int tt_cmd_search_symbols(tt_cli_opts_t *opts)
         tt_json_print(result);
         cJSON_Delete(result);
         return 1;
+    }
+
+    if (opts_format_is_text(opts))
+    {
+        char *text = render_search_symbols_as_text(result);
+        if (text)
+        {
+            fputs(text, stdout);
+            fflush(stdout);
+            free(text);
+            cJSON_Delete(result);
+            return 0;
+        }
     }
 
     tt_json_print(result);
@@ -1144,6 +1303,19 @@ int tt_cmd_search_text(tt_cli_opts_t *opts)
         tt_json_print(result);
         cJSON_Delete(result);
         return 1;
+    }
+
+    if (opts_format_is_text(opts))
+    {
+        char *text = render_search_text_as_text(result);
+        if (text)
+        {
+            fputs(text, stdout);
+            fflush(stdout);
+            free(text);
+            cJSON_Delete(result);
+            return 0;
+        }
     }
 
     tt_json_print(result);

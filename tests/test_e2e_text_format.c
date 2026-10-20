@@ -273,6 +273,110 @@ TT_TEST(test_text_search_text_no_comments_context)
     free(out);
 }
 
+/* ---------- --defs: exact-name definitions ---------- */
+
+/* Exact names only: members, parameters and header prototypes are dropped. */
+TT_TEST(test_defs_exact_definitions_only)
+{
+    c_ensure_index();
+    if (!g_c_indexed) return;
+
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd),
+             "search:symbols widget_draw -o text --defs --path %s", g_c_fixture);
+
+    char *out = NULL;
+    tt_e2e_run_raw(cmd, &out);
+    TT_ASSERT_NOT_NULL(out);
+    if (!out) return;
+
+    TT_ASSERT_STR_CONTAINS(out, "src/widget.c:17:function widget_draw\n");
+    TT_ASSERT_STR_NOT_CONTAINS(out, "src/widget.h:18:"); /* header prototype */
+    TT_ASSERT_STR_NOT_CONTAINS(out, "variable label");   /* parameter noise */
+    TT_ASSERT_STR_CONTAINS(out, "n=1\n");
+    free(out);
+}
+
+/* Several names per call, with misses listed in not_found. */
+TT_TEST(test_defs_several_names_and_not_found)
+{
+    c_ensure_index();
+    if (!g_c_indexed) return;
+
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd),
+             "search:symbols widget_draw Widget nope --defs --path %s", g_c_fixture);
+
+    cJSON *json = NULL;
+    tt_e2e_run(cmd, &json);
+    TT_ASSERT_NOT_NULL(json);
+    if (!json) return;
+
+    cJSON *n = cJSON_GetObjectItemCaseSensitive(json, "n");
+    TT_ASSERT(cJSON_IsNumber(n) && n->valueint == 3, "n should count the three definitions");
+
+    cJSON *results = cJSON_GetObjectItemCaseSensitive(json, "results");
+    TT_ASSERT(cJSON_IsArray(results), "results should be an array");
+    if (cJSON_IsArray(results)) {
+        cJSON *r;
+        cJSON_ArrayForEach(r, results) {
+            cJSON *name = cJSON_GetObjectItemCaseSensitive(r, "name");
+            const char *v = cJSON_IsString(name) ? name->valuestring : "";
+            TT_ASSERT(strcmp(v, "widget_draw") == 0 || strcmp(v, "Widget") == 0,
+                       "every result must match a requested name exactly");
+        }
+    }
+
+    cJSON *nf = cJSON_GetObjectItemCaseSensitive(json, "not_found");
+    TT_ASSERT(cJSON_IsArray(nf) && cJSON_GetArraySize(nf) == 1, "nope should be not_found");
+    if (cJSON_IsArray(nf)) {
+        cJSON *first = cJSON_GetArrayItem(nf, 0);
+        TT_ASSERT(cJSON_IsString(first) && strcmp(first->valuestring, "nope") == 0,
+                   "not_found should name the missing symbol");
+    }
+    cJSON_Delete(json);
+}
+
+/* A type that only exists in a header is still a definition, so it stays. */
+TT_TEST(test_defs_keeps_header_only_definition)
+{
+    c_ensure_index();
+    if (!g_c_indexed) return;
+
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd),
+             "search:symbols Widget -o text --defs --path %s", g_c_fixture);
+
+    char *out = NULL;
+    tt_e2e_run_raw(cmd, &out);
+    TT_ASSERT_NOT_NULL(out);
+    if (!out) return;
+
+    TT_ASSERT_STR_CONTAINS(out, "src/widget.h:5:class Widget\n");
+    TT_ASSERT_STR_NOT_CONTAINS(out, "method draw"); /* struct member */
+    free(out);
+}
+
+/* --defs without a name is a usage error. */
+TT_TEST(test_defs_requires_a_name)
+{
+    c_ensure_index();
+    if (!g_c_indexed) return;
+
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd), "search:symbols --defs --path %s", g_c_fixture);
+
+    cJSON *json = NULL;
+    int rc = tt_e2e_run(cmd, &json);
+    TT_ASSERT(rc != 0, "--defs without a name should fail");
+    TT_ASSERT_NOT_NULL(json);
+    if (json) {
+        cJSON *err = cJSON_GetObjectItemCaseSensitive(json, "error");
+        TT_ASSERT(cJSON_IsString(err), "should report an error code");
+        cJSON_Delete(json);
+    }
+}
+
 void run_e2e_text_format_tests(void)
 {
     TT_RUN(test_text_search_symbols_lines);
@@ -286,4 +390,8 @@ void run_e2e_text_format_tests(void)
     TT_RUN(test_text_inspect_file_no_comments);
     TT_RUN(test_text_inspect_symbol_no_comments);
     TT_RUN(test_text_search_text_no_comments_context);
+    TT_RUN(test_defs_exact_definitions_only);
+    TT_RUN(test_defs_several_names_and_not_found);
+    TT_RUN(test_defs_keeps_header_only_definition);
+    TT_RUN(test_defs_requires_a_name);
 }

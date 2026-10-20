@@ -73,6 +73,7 @@ static const flag_def_t flag_table[] = {
     BOOL_FLAG('D', "debug",          debug),
     BOOL_FLAG('X', "diagnostic",     diagnostic),
     BOOL_FLAG( 0,  "no-comments",    no_comments),
+    BOOL_FLAG( 0,  "defs",           defs),
     BOOL_FLAG('a', "all",            all),
     BOOL_FLAG( 0,  "confirm",        confirm),
     BOOL_FLAG('F', "force",          force),

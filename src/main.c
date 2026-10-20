@@ -136,7 +136,7 @@ static void print_usage(void)
             "\n"
             "Global options:\n"
             "  -p, --path <dir>       Project path (default: current directory)\n"
-            "  -o, --format <fmt>     Output format: json, table (default: json)\n"
+            "  -o, --format <fmt>     Output format: json, table, text (default: json)\n"
             "      --filter <pattern> Include files matching pattern\n"
             "  -e, --exclude <pat>    Exclude files matching pattern\n"
             "  -l, --limit <n>        Max results\n"

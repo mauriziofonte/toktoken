@@ -189,7 +189,7 @@ Available for all commands.
 | Short | Long | Argument | Description |
 | ----- | ---- | -------- | ----------- |
 | `-p` | `--path` | `<dir>` | Set the project directory. Defaults to the current working directory. |
-| `-o` | `--format` | `<fmt>` | Output format: `json` (default) or `table` (human-readable columnar output). |
+| `-o` | `--format` | `<fmt>` | Output format: `json` (default), `table` (human-readable columnar output), or `text` (grep-style agent lines, see [Text Output](#text-output--format-text)). |
 | | `--filter` | `<pattern>` | Include only files whose path matches this pattern. Pipe-separated for OR: `--filter "src\|lib"`. Case-insensitive. |
 | `-e` | `--exclude` | `<pattern>` | Exclude files whose path matches this pattern. Pipe-separated for OR: `-e "vendor\|node_modules"`. Case-insensitive. |
 | `-l` | `--limit` | `<n>` | Cap the number of results returned. Applies to all search and list commands. |
@@ -229,6 +229,50 @@ toktoken inspect:tree -cd2
 toktoken search:symbols "init" -cnrs
 # equivalent to: --compact --count --regex --case-sensitive
 ```
+
+## Text Output
+
+`-o text` prints grep-style lines instead of a JSON document: same data,
+fewer bytes, no braces, no repeated field names, no string escaping. Use it
+when something is reading the result rather than parsing it.
+
+```bash
+toktoken search:symbols "widget_draw" -o text
+# src/widget.c:17:function widget_draw
+# n=1
+
+toktoken search:text "clamp" -C1 -o text
+# src/widget.c-4-// Internal helper.
+# src/widget.c:5:static int clamp(int v, int lo, int hi)
+# src/widget.c-6-{
+# n=1
+
+toktoken inspect:symbol "src/widget.c::widget_draw#function" -o text
+# // src/widget.c:17-25 function widget_draw
+# int widget_draw(Widget *w, const char *label)
+# {
+#     ...
+
+toktoken inspect:file src/widget.c --lines 17-20 -o text
+# 17: int widget_draw(Widget *w, const char *label)
+# 18: {
+# 19:     /* nothing to draw */
+# 20:     if (!w || !label)
+```
+
+Line shapes:
+
+| Command | Shape |
+| ------- | ----- |
+| `search:symbols` | `file:line:kind name`. The symbol id is appended as ` id=...` only when it carries information the line does not already show (qualified names such as a parameter or a struct member, overload suffixes). |
+| `search:text` | `file:line:text` for hits, `file-line-text` for `-C` context lines (grep's own separator), then an `n=<count>` trailer. |
+| `inspect:symbol` | `// file:line-end kind name` header, then the symbol's source. Misses in a batch print as `// not found: <id>`. |
+| `inspect:file` | `N: line`, using the file's real line numbers. |
+
+Both searches end with `n=<count>`. Modes with no grep equivalent
+(`--count`, `--group-by`) keep JSON output. The JSON contract itself is
+unchanged: `text` is a rendering of the same result, so MCP clients,
+savings tracking and scripts that parse JSON are unaffected.
 
 ## Diagnostic Mode
 

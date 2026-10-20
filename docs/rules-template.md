@@ -66,6 +66,7 @@ search.
 ## Key Flags (always use for efficiency)
 
 - `--detail compact` on search:symbols -- returns only id/name/kind/file/line
+- `-o text` -- grep-style agent lines instead of a JSON document (cheapest output)
 - `--compact` on inspect:symbol/bundle -- shorter JSON keys
 - `--exclude test|deps|vendor` -- filter noise on initial exploration
 - `--limit N` -- always cap search results (10-15 for discovery, 5 for targeted)

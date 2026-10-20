@@ -369,6 +369,30 @@ toktoken inspect:tree --depth 2
 | `cache:clear` | Delete the index database |
 | `help [command]` | List all tools or show detailed usage for a specific tool |
 
+#### Text output (`-o text`)
+
+`-o text` renders the same result as grep-style lines instead of a JSON
+document. It costs fewer tokens per call: no braces, no repeated field
+names, no escaping. Prefer it when you will read the output yourself
+rather than parse it.
+
+```bash
+toktoken search:symbols "widget_draw" -o text   # file:line:kind name
+toktoken search:text "clamp" -C1 -o text        # file:line:text, n=<count>
+toktoken inspect:symbol "src/a.c::f#function" -o text  # header + source
+toktoken inspect:file src/a.c --lines 10-20 -o text    # N: line
+```
+
+| Command | Text shape |
+| ------- | ---------- |
+| `search:symbols` | `file:line:kind name`, with ` id=...` only when the id is not derivable from the line; ends with `n=<count>` |
+| `search:text` | `file:line:text` for hits, `file-line-text` for `-C` context lines; ends with `n=<count>` |
+| `inspect:symbol` | `// file:line-end kind name` then the source; misses print `// not found: <id>` |
+| `inspect:file` | `N: line` with the file's real line numbers |
+
+`--count` and `--group-by` have no grep equivalent and keep JSON. The JSON
+contract is unchanged, so MCP clients and scripts are unaffected.
+
 ---
 
 ## Workflow Patterns

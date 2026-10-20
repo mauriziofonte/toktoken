@@ -206,6 +206,73 @@ TT_TEST(test_text_inspect_file_numbered)
     free(out);
 }
 
+/* ---------- --no-comments ---------- */
+
+/* Blank and comment-only lines go away, real line numbers stay. */
+TT_TEST(test_text_inspect_file_no_comments)
+{
+    c_ensure_index();
+    if (!g_c_indexed) return;
+
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd),
+             "inspect:file src/widget.c --lines 14-25 -o text --no-comments --path %s",
+             g_c_fixture);
+
+    char *out = NULL;
+    tt_e2e_run_raw(cmd, &out);
+    TT_ASSERT_NOT_NULL(out);
+    if (!out) return;
+
+    TT_ASSERT_STR_CONTAINS(out, "17: int widget_draw(Widget *w, const char *label)\n");
+    TT_ASSERT_STR_CONTAINS(out, "22:     int len = clamp((int)strlen(label), 0, w->width);\n");
+    TT_ASSERT_STR_NOT_CONTAINS(out, "14:"); /* block comment start */
+    TT_ASSERT_STR_NOT_CONTAINS(out, "19:"); /* inline comment */
+    free(out);
+}
+
+TT_TEST(test_text_inspect_symbol_no_comments)
+{
+    c_ensure_index();
+    if (!g_c_indexed) return;
+
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd),
+             "inspect:symbol src/widget.c::widget_draw#function -o text --no-comments --path %s",
+             g_c_fixture);
+
+    char *out = NULL;
+    tt_e2e_run_raw(cmd, &out);
+    TT_ASSERT_NOT_NULL(out);
+    if (!out) return;
+
+    TT_ASSERT_STR_CONTAINS(out, "// src/widget.c:17-25 function widget_draw\n");
+    TT_ASSERT_STR_NOT_CONTAINS(out, "nothing to draw");
+    TT_ASSERT_STR_CONTAINS(out, "return len;");
+    free(out);
+}
+
+/* Comment and blank context lines are dropped; hit lines are kept. */
+TT_TEST(test_text_search_text_no_comments_context)
+{
+    c_ensure_index();
+    if (!g_c_indexed) return;
+
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd),
+             "search:text clamp -C 3 -o text --no-comments --path %s", g_c_fixture);
+
+    char *out = NULL;
+    tt_e2e_run_raw(cmd, &out);
+    TT_ASSERT_NOT_NULL(out);
+    if (!out) return;
+
+    TT_ASSERT_STR_CONTAINS(out, "src/widget.c:5:static int clamp(int v, int lo, int hi)\n");
+    TT_ASSERT_STR_NOT_CONTAINS(out, "-4-// Internal helper.");
+    TT_ASSERT_STR_CONTAINS(out, "src/widget.c-2-#include <string.h>\n");
+    free(out);
+}
+
 void run_e2e_text_format_tests(void)
 {
     TT_RUN(test_text_search_symbols_lines);
@@ -216,4 +283,7 @@ void run_e2e_text_format_tests(void)
     TT_RUN(test_text_inspect_symbol_header);
     TT_RUN(test_text_inspect_symbol_not_found);
     TT_RUN(test_text_inspect_file_numbered);
+    TT_RUN(test_text_inspect_file_no_comments);
+    TT_RUN(test_text_inspect_symbol_no_comments);
+    TT_RUN(test_text_search_text_no_comments_context);
 }

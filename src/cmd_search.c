@@ -1143,10 +1143,12 @@ static int text_get_int(const cJSON *item, const char *key, int def)
  *   file-line-text          context line ('-' like grep's separator)
  *   n=<count>               trailer
  *
- * Returns NULL when the result has no "results" array (--count, --group-by),
- * in which case the caller keeps JSON output. [caller-frees]
+ * With no_comments, blank and comment-only context lines are dropped;
+ * hit lines are always kept. Returns NULL when the result has no
+ * "results" array (--count, --group-by), in which case the caller keeps
+ * JSON output. [caller-frees]
  */
-static char *render_search_text_as_text(const cJSON *result)
+static char *render_search_text_as_text(const cJSON *result, bool no_comments)
 {
     const cJSON *items = cJSON_GetObjectItem(result, "results");
     if (!items || !cJSON_IsArray(items))
@@ -1161,6 +1163,7 @@ static char *render_search_text_as_text(const cJSON *result)
         const char *f = text_get_str(item, "f", "file");
         int line = text_get_int(item, "l", 0);
         const char *t = text_get_str(item, "t", "text");
+        bool in_block = false;
 
         const cJSON *before = cJSON_GetObjectItem(item, "before");
         if (before && cJSON_IsArray(before))
@@ -1169,7 +1172,11 @@ static char *render_search_text_as_text(const cJSON *result)
             for (int i = 0; i < bn; i++)
             {
                 const char *b = cJSON_GetStringValue(cJSON_GetArrayItem(before, i));
-                tt_strbuf_appendf(&sb, "%s-%d-%s\n", f, line - (bn - i), b ? b : "");
+                if (!b)
+                    b = "";
+                bool drop = no_comments && tt_line_is_comment_or_blank(b, &in_block);
+                if (!drop)
+                    tt_strbuf_appendf(&sb, "%s-%d-%s\n", f, line - (bn - i), b);
             }
         }
 
@@ -1182,7 +1189,11 @@ static char *render_search_text_as_text(const cJSON *result)
             for (int i = 0; i < an; i++)
             {
                 const char *a = cJSON_GetStringValue(cJSON_GetArrayItem(after, i));
-                tt_strbuf_appendf(&sb, "%s-%d-%s\n", f, line + i + 1, a ? a : "");
+                if (!a)
+                    a = "";
+                bool drop = no_comments && tt_line_is_comment_or_blank(a, &in_block);
+                if (!drop)
+                    tt_strbuf_appendf(&sb, "%s-%d-%s\n", f, line + i + 1, a);
             }
         }
     }
@@ -1307,7 +1318,7 @@ int tt_cmd_search_text(tt_cli_opts_t *opts)
 
     if (opts_format_is_text(opts))
     {
-        char *text = render_search_text_as_text(result);
+        char *text = render_search_text_as_text(result, opts->no_comments);
         if (text)
         {
             fputs(text, stdout);

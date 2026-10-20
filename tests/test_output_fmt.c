@@ -102,6 +102,52 @@ TT_TEST(test_ofmt_apply_limit_null_count)
     tt_apply_limit(5, NULL);
 }
 
+/* ---------- tt_line_is_comment_or_blank (--no-comments) ---------- */
+
+TT_TEST(test_comment_blank_lines)
+{
+    bool in_block = false;
+    TT_ASSERT(tt_line_is_comment_or_blank("", &in_block), "empty is blank");
+    TT_ASSERT(tt_line_is_comment_or_blank("   \t ", &in_block), "spaces are blank");
+}
+
+TT_TEST(test_comment_line_comments)
+{
+    bool in_block = false;
+    TT_ASSERT(tt_line_is_comment_or_blank("// note", &in_block), "line comment");
+    TT_ASSERT(tt_line_is_comment_or_blank("    // indented", &in_block), "indented");
+    TT_ASSERT(!in_block, "line comment does not open a block");
+}
+
+TT_TEST(test_comment_block_spans_lines)
+{
+    bool in_block = false;
+    TT_ASSERT(tt_line_is_comment_or_blank("/*", &in_block), "block start");
+    TT_ASSERT(in_block, "state tracks the open block");
+    TT_ASSERT(tt_line_is_comment_or_blank(" * continuation", &in_block), "body");
+    TT_ASSERT(tt_line_is_comment_or_blank(" */", &in_block), "close marker");
+    TT_ASSERT(!in_block, "state clears after the close marker");
+    TT_ASSERT(!tt_line_is_comment_or_blank("int x;", &in_block), "code after block");
+}
+
+TT_TEST(test_comment_block_closes_on_one_line)
+{
+    bool in_block = false;
+    TT_ASSERT(tt_line_is_comment_or_blank("/* short */", &in_block), "single line block");
+    TT_ASSERT(!in_block, "state stays clear for a closed block");
+}
+
+TT_TEST(test_comment_code_lines_are_kept)
+{
+    bool in_block = false;
+    TT_ASSERT(!tt_line_is_comment_or_blank("int x; /* trailing */", &in_block),
+               "code with trailing comment");
+    TT_ASSERT(!tt_line_is_comment_or_blank("    *p = 0;", &in_block),
+               "dereference is not a comment");
+    TT_ASSERT(!tt_line_is_comment_or_blank("#include <stdio.h>", &in_block),
+               "preprocessor is not a comment");
+}
+
 void run_output_fmt_tests(void)
 {
     TT_RUN(test_ofmt_no_filters_matches_everything);
@@ -119,4 +165,9 @@ void run_output_fmt_tests(void)
     TT_RUN(test_ofmt_apply_limit_no_op_when_zero);
     TT_RUN(test_ofmt_apply_limit_no_op_when_under);
     TT_RUN(test_ofmt_apply_limit_null_count);
+    TT_RUN(test_comment_blank_lines);
+    TT_RUN(test_comment_line_comments);
+    TT_RUN(test_comment_block_spans_lines);
+    TT_RUN(test_comment_block_closes_on_one_line);
+    TT_RUN(test_comment_code_lines_are_kept);
 }

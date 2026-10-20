@@ -1355,7 +1355,7 @@ static int text_get_int(const cJSON *item, const char *key, int def)
 }
 
 /* Append one symbol as "// file:line-end kind name" followed by its source. */
-static void append_symbol_as_text(tt_strbuf_t *sb, const cJSON *item)
+static void append_symbol_as_text(tt_strbuf_t *sb, const cJSON *item, bool no_comments)
 {
     const char *file = text_get_str(item, "file");
     const char *kind = text_get_str(item, "kind");
@@ -1371,12 +1371,31 @@ static void append_symbol_as_text(tt_strbuf_t *sb, const cJSON *item)
     else
         tt_strbuf_appendf(sb, "// %s:%d %s %s\n", file, line, kind, name);
 
-    if (source && source[0])
+    if (!source[0])
+        return;
+
+    if (!no_comments)
     {
         tt_strbuf_append_str(sb, source);
         if (source[strlen(source) - 1] != '\n')
             tt_strbuf_append_char(sb, '\n');
+        return;
     }
+
+    int n = 0;
+    char **lines = tt_str_split(source, '\n', &n);
+    if (!lines)
+        return;
+    bool in_block = false;
+    for (int i = 0; i < n; i++)
+    {
+        const char *ln = lines[i] ? lines[i] : "";
+        if (tt_line_is_comment_or_blank(ln, &in_block))
+            continue;
+        tt_strbuf_append_str(sb, ln);
+        tt_strbuf_append_char(sb, '\n');
+    }
+    tt_str_split_free(lines);
 }
 
 /*
@@ -1389,7 +1408,7 @@ static void append_symbol_as_text(tt_strbuf_t *sb, const cJSON *item)
  * Handles both the flat single-symbol shape and the batch shape.
  * [caller-frees]
  */
-static char *render_inspect_symbol_as_text(const cJSON *result)
+static char *render_inspect_symbol_as_text(const cJSON *result, bool no_comments)
 {
     if (!result || cJSON_GetObjectItem(result, "error"))
         return NULL;
@@ -1402,11 +1421,11 @@ static char *render_inspect_symbol_as_text(const cJSON *result)
     {
         const cJSON *item = NULL;
         cJSON_ArrayForEach(item, symbols)
-            append_symbol_as_text(&sb, item);
+            append_symbol_as_text(&sb, item, no_comments);
     }
     else
     {
-        append_symbol_as_text(&sb, result);
+        append_symbol_as_text(&sb, result, no_comments);
     }
 
     const cJSON *errs = cJSON_GetObjectItem(result, "errors");
@@ -1422,10 +1441,10 @@ static char *render_inspect_symbol_as_text(const cJSON *result)
 
 /*
  * Render an inspect:file result as numbered lines "N: line".
- * Line numbers come from the returned range, so they match the file.
- * [caller-frees]
+ * Line numbers come from the returned range, so they stay correct even
+ * when --no-comments drops lines. [caller-frees]
  */
-static char *render_inspect_file_as_text(const cJSON *result)
+static char *render_inspect_file_as_text(const cJSON *result, bool no_comments)
 {
     const char *content = text_get_str(result, "content");
     if (!content[0])
@@ -1449,8 +1468,14 @@ static char *render_inspect_file_as_text(const cJSON *result)
 
     tt_strbuf_t sb;
     tt_strbuf_init(&sb);
+    bool in_block = false;
     for (int i = 0; i < line_count; i++)
-        tt_strbuf_appendf(&sb, "%d: %s\n", start + i, lines[i] ? lines[i] : "");
+    {
+        const char *ln = lines[i] ? lines[i] : "";
+        if (no_comments && tt_line_is_comment_or_blank(ln, &in_block))
+            continue;
+        tt_strbuf_appendf(&sb, "%d: %s\n", start + i, ln);
+    }
 
     tt_str_split_free(lines);
     return tt_strbuf_detach(&sb);
@@ -1551,7 +1576,7 @@ int tt_cmd_inspect_symbol(tt_cli_opts_t *opts)
     /* Text format: source blocks with a "// file:line kind name" header */
     if (inspect_fmt_is_text(opts))
     {
-        char *text = render_inspect_symbol_as_text(result);
+        char *text = render_inspect_symbol_as_text(result, opts->no_comments);
         if (text)
         {
             fputs(text, stdout);
@@ -1594,7 +1619,7 @@ int tt_cmd_inspect_file(tt_cli_opts_t *opts)
 
     if (inspect_fmt_is_text(opts))
     {
-        char *text = render_inspect_file_as_text(result);
+        char *text = render_inspect_file_as_text(result, opts->no_comments);
         if (text)
         {
             fputs(text, stdout);

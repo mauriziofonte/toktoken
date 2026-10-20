@@ -35,6 +35,17 @@ TT_TEST(test_cli_long_bool_compact)
     tt_cli_opts_free(&opts);
 }
 
+TT_TEST(test_cli_long_bool_no_comments)
+{
+    tt_cli_opts_t opts;
+    int rc;
+    PARSE("--no-comments");
+    TT_ASSERT_EQ_INT(0, rc);
+    TT_ASSERT_TRUE(opts.no_comments);
+    TT_ASSERT_FALSE(opts.compact);
+    tt_cli_opts_free(&opts);
+}
+
 TT_TEST(test_cli_long_bool_count)
 {
     tt_cli_opts_t opts;
@@ -1105,6 +1116,7 @@ void run_cli_tests(void)
 {
     /* Long boolean flags */
     TT_RUN(test_cli_long_bool_compact);
+    TT_RUN(test_cli_long_bool_no_comments);
     TT_RUN(test_cli_long_bool_count);
     TT_RUN(test_cli_long_bool_version);
     TT_RUN(test_cli_long_bool_help);

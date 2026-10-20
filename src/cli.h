@@ -100,6 +100,9 @@ typedef struct
     /* --diagnostic (structured JSONL diagnostics on stderr) */
     bool diagnostic;
 
+    /* --no-comments (drop blank and comment-only lines in --format text) */
+    bool no_comments;
+
     /* Progress callback (set by MCP layer, NULL for CLI) */
     void (*progress_cb)(void *ctx, int64_t done, int64_t total);
     void *progress_ctx;

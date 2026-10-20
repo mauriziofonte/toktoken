@@ -17,6 +17,7 @@
 #include "hashmap.h"
 #include "fast_hash.h"
 #include "token_savings.h"
+#include "text_render.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1325,247 +1326,6 @@ cJSON *tt_cmd_inspect_tree_exec(tt_cli_opts_t *opts)
  * CLI wrappers
  * ================================================================ */
 
-/* ================================================================
- * --format text: grep-style agent-line output
- *
- * Rendered from the JSON result returned by the _exec() functions, so
- * the exec path, the MCP layer and savings tracking stay unchanged.
- * ================================================================ */
-
-/* True when --format text was requested. */
-static bool inspect_fmt_is_text(const tt_cli_opts_t *opts)
-{
-    return opts && opts->format && strcmp(opts->format, "text") == 0;
-}
-
-/* Borrow a string field, "" when absent. */
-static const char *text_get_str(const cJSON *item, const char *key)
-{
-    const char *v = cJSON_GetStringValue(cJSON_GetObjectItem(item, key));
-    return v ? v : "";
-}
-
-/* Borrow a numeric field as int, def when absent. */
-static int text_get_int(const cJSON *item, const char *key, int def)
-{
-    const cJSON *n = cJSON_GetObjectItem(item, key);
-    if (!n || !cJSON_IsNumber(n))
-        return def;
-    return (int)n->valuedouble;
-}
-
-/* True when the line contains any pipe-separated alternative (case-insensitive). */
-static bool line_matches_grep(const char *line, const char *patterns)
-{
-    if (!patterns || !patterns[0])
-        return true;
-
-    const char *p = patterns;
-    while (*p)
-    {
-        const char *bar = strchr(p, '|');
-        size_t len = bar ? (size_t)(bar - p) : strlen(p);
-
-        while (len > 0 && isspace((unsigned char)p[0]))
-        {
-            p++;
-            len--;
-        }
-        while (len > 0 && isspace((unsigned char)p[len - 1]))
-            len--;
-
-        if (len > 0)
-        {
-            char *pat = tt_strndup(p, len);
-            bool hit = pat && tt_str_contains_ci(line, pat);
-            free(pat);
-            if (hit)
-                return true;
-        }
-
-        if (!bar)
-            break;
-        p = bar + 1;
-    }
-    return false;
-}
-
-/*
- * Append one symbol as "// file:line-end kind name" followed by its source.
- *
- * With no_comments, blank and comment-only lines are dropped. With
- * grep_pat, only the body lines matching the (pipe-separated,
- * case-insensitive) pattern are printed, each with its real file line
- * number, and the header records how many survived as
- * "[grep: K of N lines]".
- */
-static void append_symbol_as_text(tt_strbuf_t *sb, const cJSON *item,
-                                  bool no_comments, const char *grep_pat)
-{
-    const char *file = text_get_str(item, "file");
-    const char *kind = text_get_str(item, "kind");
-    const char *name = text_get_str(item, "name");
-    int line = text_get_int(item, "line", text_get_int(item, "l", 0));
-    int end = text_get_int(item, "end", text_get_int(item, "e", 0));
-    const char *source = text_get_str(item, "source");
-    if (!source[0])
-        source = text_get_str(item, "src");
-
-    bool filtering = no_comments || (grep_pat && grep_pat[0]);
-
-    int total = 0;
-    char **lines = NULL;
-    bool *show = NULL;
-    int shown = 0;
-
-    if (source[0])
-    {
-        lines = tt_str_split(source, '\n', &total);
-        if (lines && total > 0 && lines[total - 1] && lines[total - 1][0] == '\0')
-            total--; /* trailing newline, not a real line */
-
-        if (lines && filtering)
-        {
-            show = calloc((size_t)(total > 0 ? total : 1), sizeof(bool));
-            bool in_block = false;
-            for (int i = 0; i < total; i++)
-            {
-                const char *ln = lines[i] ? lines[i] : "";
-                bool keep = true;
-                if (no_comments && tt_line_is_comment_or_blank(ln, &in_block))
-                    keep = false;
-                if (keep && grep_pat && grep_pat[0] && !line_matches_grep(ln, grep_pat))
-                    keep = false;
-                if (show)
-                    show[i] = keep;
-                if (keep)
-                    shown++;
-            }
-        }
-        else if (lines)
-        {
-            shown = total;
-        }
-    }
-
-    if (end > line)
-        tt_strbuf_appendf(sb, "// %s:%d-%d %s %s", file, line, end, kind, name);
-    else
-        tt_strbuf_appendf(sb, "// %s:%d %s %s", file, line, kind, name);
-
-    if (grep_pat && grep_pat[0])
-        tt_strbuf_appendf(sb, " [grep: %d of %d lines]", shown, total);
-
-    tt_strbuf_append_char(sb, '\n');
-
-    if (!lines)
-    {
-        free(show);
-        return;
-    }
-
-    for (int i = 0; i < total; i++)
-    {
-        const char *ln = lines[i] ? lines[i] : "";
-        if (filtering && show && !show[i])
-            continue;
-        if (grep_pat && grep_pat[0])
-            tt_strbuf_appendf(sb, "%d: %s\n", line + i, ln);
-        else
-        {
-            tt_strbuf_append_str(sb, ln);
-            tt_strbuf_append_char(sb, '\n');
-        }
-    }
-
-    free(show);
-    tt_str_split_free(lines);
-}
-
-/*
- * Render an inspect:symbol result as source blocks.
- *
- *   // file:line-end kind name
- *   <source>
- *   // not found: <id>   for ids the index does not know
- *
- * Handles both the flat single-symbol shape and the batch shape.
- * [caller-frees]
- */
-static char *render_inspect_symbol_as_text(const cJSON *result, bool no_comments,
-                                           const char *grep_pat)
-{
-    if (!result || cJSON_GetObjectItem(result, "error"))
-        return NULL;
-
-    tt_strbuf_t sb;
-    tt_strbuf_init(&sb);
-
-    const cJSON *symbols = cJSON_GetObjectItem(result, "symbols");
-    if (symbols && cJSON_IsArray(symbols))
-    {
-        const cJSON *item = NULL;
-        cJSON_ArrayForEach(item, symbols)
-            append_symbol_as_text(&sb, item, no_comments, grep_pat);
-    }
-    else
-    {
-        append_symbol_as_text(&sb, result, no_comments, grep_pat);
-    }
-
-    const cJSON *errs = cJSON_GetObjectItem(result, "errors");
-    if (errs && cJSON_IsArray(errs))
-    {
-        const cJSON *e = NULL;
-        cJSON_ArrayForEach(e, errs)
-            tt_strbuf_appendf(&sb, "// not found: %s\n", text_get_str(e, "id"));
-    }
-
-    return tt_strbuf_detach(&sb);
-}
-
-/*
- * Render an inspect:file result as numbered lines "N: line".
- * Line numbers come from the returned range, so they stay correct even
- * when --no-comments drops lines. [caller-frees]
- */
-static char *render_inspect_file_as_text(const cJSON *result, bool no_comments)
-{
-    const char *content = text_get_str(result, "content");
-    if (!content[0])
-        return NULL;
-
-    int start = 1;
-    const cJSON *range = cJSON_GetObjectItem(result, "range");
-    if (range && cJSON_IsArray(range) && cJSON_GetArraySize(range) >= 1)
-    {
-        const cJSON *first = cJSON_GetArrayItem(range, 0);
-        if (first && cJSON_IsNumber(first))
-            start = (int)first->valuedouble;
-    }
-    if (start < 1)
-        start = 1;
-
-    int line_count = 0;
-    char **lines = tt_str_split(content, '\n', &line_count);
-    if (!lines)
-        return NULL;
-
-    tt_strbuf_t sb;
-    tt_strbuf_init(&sb);
-    bool in_block = false;
-    for (int i = 0; i < line_count; i++)
-    {
-        const char *ln = lines[i] ? lines[i] : "";
-        if (no_comments && tt_line_is_comment_or_blank(ln, &in_block))
-            continue;
-        tt_strbuf_appendf(&sb, "%d: %s\n", start + i, ln);
-    }
-
-    tt_str_split_free(lines);
-    return tt_strbuf_detach(&sb);
-}
-
 /* ---- CLI wrappers ---- */
 
 int tt_cmd_inspect_outline(tt_cli_opts_t *opts)
@@ -1659,9 +1419,9 @@ int tt_cmd_inspect_symbol(tt_cli_opts_t *opts)
     }
 
     /* Text format: source blocks with a "// file:line kind name" header */
-    if (inspect_fmt_is_text(opts))
+    if (tt_text_format_requested(opts))
     {
-        char *text = render_inspect_symbol_as_text(result, opts->no_comments, opts->grep);
+        char *text = tt_render_inspect_symbol_text(result, opts->no_comments, opts->grep);
         if (text)
         {
             fputs(text, stdout);
@@ -1702,9 +1462,9 @@ int tt_cmd_inspect_file(tt_cli_opts_t *opts)
         return 1;
     }
 
-    if (inspect_fmt_is_text(opts))
+    if (tt_text_format_requested(opts))
     {
-        char *text = render_inspect_file_as_text(result, opts->no_comments);
+        char *text = tt_render_inspect_file_text(result, opts->no_comments);
         if (text)
         {
             fputs(text, stdout);

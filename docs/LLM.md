@@ -239,6 +239,12 @@ toktoken index:update
 | `suggest` | Onboarding discovery: top keywords, kind/language distribution, most-imported files, example queries |
 | `help` | Get usage details for a TokToken tool, or list all tools |
 
+`search_symbols`, `search_text`, `inspect_symbol` and `inspect_file` accept
+`format: "text"`, which returns the grep-style agent lines described under
+Text output instead of a JSON document, and costs fewer tokens per call. The
+matching arguments work too: `defs` (comma-separated exact names),
+`no_comments`, `grep`, and `members`. Text results carry no `_ttk` envelope.
+
 ### CLI command reference
 
 #### search:symbols

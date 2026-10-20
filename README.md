@@ -386,6 +386,24 @@ TokToken runs as a Model Context Protocol server for native integration with AI 
 toktoken serve
 ```
 
+### Text output from MCP tools
+
+`search_symbols`, `search_text`, `inspect_symbol` and `inspect_file` accept
+`format: "text"`. The server then sends the grep-style agent lines described
+in [Text Output](#text-output--format-text) as the tool result, instead of a
+JSON-escaped document — same data, fewer tokens.
+
+```json
+{ "name": "search_symbols",
+  "arguments": { "query": "widget_draw,widget_reset", "defs": true, "format": "text" } }
+// -> "src/widget.c:17:function widget_draw\nsrc/widget.c:27:function widget_reset\nn=2\n"
+```
+
+The matching options work in both transports: `defs` (exact-name definitions,
+several names comma-separated), `no_comments`, `grep`, and `members`. Text
+results carry no `_ttk` envelope — the envelope is what the flag is there to
+avoid. Omit `format` and the tool returns JSON exactly as before.
+
 ### Claude Code
 
 ```bash

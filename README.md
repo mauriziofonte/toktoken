@@ -277,6 +277,14 @@ toktoken inspect:symbol "src/widget.h::Widget#class" -o text --members
 # 7: int height
 # 8: int (*draw)(struct Widget *w, const char *label)
 # 9: char name[32]
+
+toktoken search:text "clamp|width" -o text
+# src/widget.c:
+# 5:static int clamp(int v, int lo, int hi)
+# 22:int len = clamp((int)strlen(label), 0, w->width);
+# 31:w->width = 0;
+# src/widget.h:6:int width;
+# n=4
 ```
 
 Line shapes:
@@ -284,7 +292,7 @@ Line shapes:
 | Command | Shape |
 | ------- | ----- |
 | `search:symbols` | `file:line:kind name`. The symbol id is appended as ` id=...` only when it carries information the line does not already show (qualified names such as a parameter or a struct member, overload suffixes). |
-| `search:text` | `file:line:text` for hits, `file-line-text` for `-C` context lines (grep's own separator), then an `n=<count>` trailer. |
+| `search:text` | `file:line:text` for hits, `file-line-text` for `-C` context lines (grep's own separator), then an `n=<count>` trailer. A file with two or more hits is printed once under a `file:` header, with `line:text` and `line-text` rows below it. |
 | `inspect:symbol` | `// file:line-end kind name` header, then the symbol's source. Misses in a batch print as `// not found: <id>`. |
 | `inspect:file` | `N: line`, using the file's real line numbers. |
 

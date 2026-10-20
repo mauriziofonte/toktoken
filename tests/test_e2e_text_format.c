@@ -95,8 +95,8 @@ TT_TEST(test_text_search_text_lines)
     TT_ASSERT_NOT_NULL(out);
     if (!out) return;
 
-    TT_ASSERT_STR_CONTAINS(out, "src/widget.c:5:static int clamp(int v, int lo, int hi)\n");
-    TT_ASSERT_STR_CONTAINS(out, "src/widget.c:22:");
+    TT_ASSERT_STR_CONTAINS(out, "src/widget.c:\n5:static int clamp(int v, int lo, int hi)\n");
+    TT_ASSERT_STR_CONTAINS(out, "22:int len = clamp(");
     TT_ASSERT_STR_CONTAINS(out, "n=");
     free(out);
 }
@@ -115,9 +115,9 @@ TT_TEST(test_text_search_text_context_lines)
     TT_ASSERT_NOT_NULL(out);
     if (!out) return;
 
-    TT_ASSERT_STR_CONTAINS(out, "src/widget.c-4-// Internal helper.\n");
-    TT_ASSERT_STR_CONTAINS(out, "src/widget.c:5:static int clamp(int v, int lo, int hi)\n");
-    TT_ASSERT_STR_CONTAINS(out, "src/widget.c-6-{\n");
+    TT_ASSERT_STR_CONTAINS(out, "src/widget.c:\n4-// Internal helper.\n");
+    TT_ASSERT_STR_CONTAINS(out, "5:static int clamp(int v, int lo, int hi)\n");
+    TT_ASSERT_STR_CONTAINS(out, "6-{\n");
     free(out);
 }
 
@@ -267,9 +267,9 @@ TT_TEST(test_text_search_text_no_comments_context)
     TT_ASSERT_NOT_NULL(out);
     if (!out) return;
 
-    TT_ASSERT_STR_CONTAINS(out, "src/widget.c:5:static int clamp(int v, int lo, int hi)\n");
+    TT_ASSERT_STR_CONTAINS(out, "src/widget.c:\n2-#include <string.h>\n");
+    TT_ASSERT_STR_CONTAINS(out, "5:static int clamp(int v, int lo, int hi)\n");
     TT_ASSERT_STR_NOT_CONTAINS(out, "-4-// Internal helper.");
-    TT_ASSERT_STR_CONTAINS(out, "src/widget.c-2-#include <string.h>\n");
     free(out);
 }
 
@@ -536,6 +536,67 @@ TT_TEST(test_text_inspect_symbol_members_skipped_for_function)
     free(out);
 }
 
+/* ---------- search:text grouping: multi-hit files print once ---------- */
+
+TT_TEST(test_text_search_text_groups_multi_hit_file)
+{
+    c_ensure_index();
+    if (!g_c_indexed) return;
+
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd), "search:text \"clamp|width\" -o text --path %s", g_c_fixture);
+
+    char *out = NULL;
+    tt_e2e_run_raw(cmd, &out);
+    TT_ASSERT_NOT_NULL(out);
+    if (!out) return;
+
+    /* the path appears once as a header, then only line:number rows */
+    TT_ASSERT_STR_CONTAINS(out, "src/widget.c:\n5:static int clamp(int v, int lo, int hi)\n");
+    TT_ASSERT(!strstr(out, "src/widget.c:5:"), "grouped rows drop the path");
+    TT_ASSERT_STR_CONTAINS(out, "n=4\n");
+    free(out);
+}
+
+/* A file with a single hit keeps the one-line grep shape. */
+TT_TEST(test_text_search_text_single_hit_stays_grep_style)
+{
+    c_ensure_index();
+    if (!g_c_indexed) return;
+
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd), "search:text MODE_IDLE -o text --path %s", g_c_fixture);
+
+    char *out = NULL;
+    tt_e2e_run_raw(cmd, &out);
+    TT_ASSERT_NOT_NULL(out);
+    if (!out) return;
+
+    TT_ASSERT_STR_CONTAINS(out, "src/widget.h:13:MODE_IDLE,\n");
+    TT_ASSERT(!strstr(out, "src/widget.h:\n"), "single hit keeps one grep line");
+    free(out);
+}
+
+/* Context lines under a group header drop the path too. */
+TT_TEST(test_text_search_text_grouped_context_lines)
+{
+    c_ensure_index();
+    if (!g_c_indexed) return;
+
+    char cmd[1024];
+    snprintf(cmd, sizeof(cmd), "search:text clamp -C1 -o text --path %s", g_c_fixture);
+
+    char *out = NULL;
+    tt_e2e_run_raw(cmd, &out);
+    TT_ASSERT_NOT_NULL(out);
+    if (!out) return;
+
+    TT_ASSERT_STR_CONTAINS(out, "src/widget.c:\n4-// Internal helper.\n");
+    TT_ASSERT_STR_CONTAINS(out, "5:static int clamp(int v, int lo, int hi)\n");
+    TT_ASSERT_STR_CONTAINS(out, "n=2\n");
+    free(out);
+}
+
 void run_e2e_text_format_tests(void)
 {
     TT_RUN(test_text_search_symbols_lines);
@@ -560,4 +621,7 @@ void run_e2e_text_format_tests(void)
     TT_RUN(test_text_inspect_symbol_members_enum);
     TT_RUN(test_text_inspect_symbol_members_multiline_and_nesting);
     TT_RUN(test_text_inspect_symbol_members_skipped_for_function);
+    TT_RUN(test_text_search_text_groups_multi_hit_file);
+    TT_RUN(test_text_search_text_single_hit_stays_grep_style);
+    TT_RUN(test_text_search_text_grouped_context_lines);
 }

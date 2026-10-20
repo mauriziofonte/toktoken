@@ -44,8 +44,11 @@ static int text_get_int(const cJSON *item, const char *key, int def)
 /*
  * search:text -> grep-style lines.
  *
- *   file:line:text          hit line
+ *   file:line:text          hit line in a file with a single hit
  *   file-line-text          context line ('-' like grep's separator)
+ *   file:                   header for a file with two or more hits
+ *   line:text               hit line under that header
+ *   line-text               context line under that header
  *   n=<count>               trailer
  */
 char *tt_render_search_text_text(const cJSON *result, bool no_comments)
@@ -57,16 +60,74 @@ char *tt_render_search_text_text(const cJSON *result, bool no_comments)
     if (!items || !cJSON_IsArray(items))
         return NULL;
 
+    int total_items = cJSON_GetArraySize(items);
+
+    /*
+     * Count hits per file so a file with several of them is printed once,
+     * under a "file:" header, instead of repeating the path on every line.
+     */
+    typedef struct {
+        const char *file;
+        int hits;
+        bool header_done;
+    } file_group_t;
+
+    file_group_t *groups = NULL;
+    int group_count = 0;
+    if (total_items > 0)
+        groups = calloc((size_t)total_items, sizeof(file_group_t));
+
+    const cJSON *item = NULL;
+    cJSON_ArrayForEach(item, items)
+    {
+        const char *f = text_get_str(item, "f", "file");
+        int i;
+        for (i = 0; i < group_count; i++)
+        {
+            if (groups[i].file && strcmp(groups[i].file, f) == 0)
+                break;
+        }
+        if (i < group_count)
+        {
+            groups[i].hits++;
+        }
+        else if (groups)
+        {
+            groups[group_count].file = f;
+            groups[group_count].hits = 1;
+            group_count++;
+        }
+    }
+
     tt_strbuf_t sb;
     tt_strbuf_init(&sb);
 
-    const cJSON *item = NULL;
+    const char *printed_file = NULL;
+
     cJSON_ArrayForEach(item, items)
     {
         const char *f = text_get_str(item, "f", "file");
         int line = text_get_int(item, "l", 0);
         const char *t = text_get_str(item, "t", "text");
         bool in_block = false;
+
+        int hits = 1;
+        for (int i = 0; i < group_count; i++)
+        {
+            if (groups[i].file && strcmp(groups[i].file, f) == 0)
+            {
+                hits = groups[i].hits;
+                break;
+            }
+        }
+
+        bool grouped = hits >= 2;
+
+        if (grouped && (!printed_file || strcmp(printed_file, f) != 0))
+        {
+            tt_strbuf_appendf(&sb, "%s:\n", f);
+            printed_file = f;
+        }
 
         const cJSON *before = cJSON_GetObjectItem(item, "before");
         if (before && cJSON_IsArray(before))
@@ -79,11 +140,19 @@ char *tt_render_search_text_text(const cJSON *result, bool no_comments)
                     b = "";
                 bool drop = no_comments && tt_line_is_comment_or_blank(b, &in_block);
                 if (!drop)
-                    tt_strbuf_appendf(&sb, "%s-%d-%s\n", f, line - (bn - i), b);
+                {
+                    if (grouped)
+                        tt_strbuf_appendf(&sb, "%d-%s\n", line - (bn - i), b);
+                    else
+                        tt_strbuf_appendf(&sb, "%s-%d-%s\n", f, line - (bn - i), b);
+                }
             }
         }
 
-        tt_strbuf_appendf(&sb, "%s:%d:%s\n", f, line, t);
+        if (grouped)
+            tt_strbuf_appendf(&sb, "%d:%s\n", line, t);
+        else
+            tt_strbuf_appendf(&sb, "%s:%d:%s\n", f, line, t);
 
         const cJSON *after = cJSON_GetObjectItem(item, "after");
         if (after && cJSON_IsArray(after))
@@ -96,12 +165,18 @@ char *tt_render_search_text_text(const cJSON *result, bool no_comments)
                     a = "";
                 bool drop = no_comments && tt_line_is_comment_or_blank(a, &in_block);
                 if (!drop)
-                    tt_strbuf_appendf(&sb, "%s-%d-%s\n", f, line + i + 1, a);
+                {
+                    if (grouped)
+                        tt_strbuf_appendf(&sb, "%d-%s\n", line + i + 1, a);
+                    else
+                        tt_strbuf_appendf(&sb, "%s-%d-%s\n", f, line + i + 1, a);
+                }
             }
         }
     }
 
-    tt_strbuf_appendf(&sb, "n=%d\n", text_get_int(result, "n", cJSON_GetArraySize(items)));
+    tt_strbuf_appendf(&sb, "n=%d\n", text_get_int(result, "n", total_items));
+    free(groups);
     return tt_strbuf_detach(&sb);
 }
 

@@ -400,7 +400,7 @@ toktoken inspect:file src/a.c --lines 10-20 -o text    # N: line
 | Command | Text shape |
 | ------- | ---------- |
 | `search:symbols` | `file:line:kind name`, with ` id=...` only when the id is not derivable from the line; ends with `n=<count>` |
-| `search:text` | `file:line:text` for hits, `file-line-text` for `-C` context lines; ends with `n=<count>` |
+| `search:text` | `file:line:text` for hits, `file-line-text` for `-C` context lines; ends with `n=<count>`. A file with 2+ hits prints once under a `file:` header with `line:text` rows. |
 | `inspect:symbol` | `// file:line-end kind name` then the source; misses print `// not found: <id>` |
 | `inspect:file` | `N: line` with the file's real line numbers |
 

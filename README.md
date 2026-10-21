@@ -172,6 +172,7 @@ Used with `search:symbols` and `search:text`.
 | `-D` | `--debug` | | Include per-field scoring breakdown in `search:symbols` results. Shows how name, signature, summary, and qualified_name contribute to the final score. |
 | | `--no-sig` | | Omit symbol signatures from results. Reduces output size for discovery queries where only names and locations matter. |
 | | `--no-summary` | | Omit symbol summaries from results. Combine with `--no-sig` for minimal output. |
+| | `--defs` | | `search:symbols` only: resolve exact names instead of running a fuzzy search. Accepts several names in one call. Keeps real definitions and drops struct members, parameters, and header prototypes whose body is indexed in a source file. Names with nothing left are listed in `not_found`. |
 
 #### Inspect options
 
@@ -180,6 +181,8 @@ Used with `inspect:file`, `inspect:tree`, and `inspect:bundle`.
 | Short | Long | Argument | Description |
 | ----- | ---- | -------- | ----------- |
 | | `--lines` | `<start-end>` | Return only a specific line range from `inspect:file`. Example: `--lines 10-50` returns lines 10 through 50. |
+| | `--grep` | `<pat>` | With `-o text` on `inspect:symbol`, print only the body lines matching the pattern. Case-insensitive, pipe-separated alternatives. Each line keeps its real file line number and the header records the cut as `[grep: K of N lines]`. |
+| | `--members` | | With `-o text` on `inspect:symbol`, reduce a type symbol (`class`, `struct`, `union`, `enum`, `type`, `interface`, `trait`) to one row per member instead of its full source: `LINE: declaration`, with the count in the header as `[member: N]`. Multi-line declarations are joined, nested bodies collapse to `{...}`, and comments and preprocessor lines are dropped. |
 | `-d` | `--depth` | `<n>` | Limit directory depth for `inspect:tree`. Example: `-d 2` shows only top-level and one level of subdirectories. |
 
 #### Global options
@@ -189,11 +192,12 @@ Available for all commands.
 | Short | Long | Argument | Description |
 | ----- | ---- | -------- | ----------- |
 | `-p` | `--path` | `<dir>` | Set the project directory. Defaults to the current working directory. |
-| `-o` | `--format` | `<fmt>` | Output format: `json` (default) or `table` (human-readable columnar output). |
+| `-o` | `--format` | `<fmt>` | Output format: `json` (default), `table` (human-readable columnar output), or `text` (grep-style agent lines, see [Text Output](#text-output--format-text)). |
 | | `--filter` | `<pattern>` | Include only files whose path matches this pattern. Pipe-separated for OR: `--filter "src\|lib"`. Case-insensitive. |
 | `-e` | `--exclude` | `<pattern>` | Exclude files whose path matches this pattern. Pipe-separated for OR: `-e "vendor\|node_modules"`. Case-insensitive. |
 | `-l` | `--limit` | `<n>` | Cap the number of results returned. Applies to all search and list commands. |
 | `-c` | `--compact` | | Compact JSON output. Removes whitespace and shortens field names, reducing response size by ~47%. Recommended for AI agent usage. |
+| | `--no-comments` | | With `-o text`, drop blank lines and lines that contain only a C-family comment. Applies to `inspect:symbol`, `inspect:file`, and the context lines of `search:text`; hit lines and real line numbers are kept. |
 | `-u` | `--unique` | | Deduplicate results by symbol name. |
 | `-S` | `--sort` | `<field>` | Sort results by the given field. Default: `score` (relevance). Other options depend on the command. |
 | `-t` | `--truncate` | `<n>` | Truncate output lines to `n` characters. Default: 120. Minimum: 20. |
@@ -206,6 +210,9 @@ Available for all commands.
 ```bash
 # Search symbols, compact + count only
 toktoken search:symbols "auth" -cn
+
+# Resolve exact definitions by name, as one cheap call
+toktoken search:symbols widget_draw widget_reset --defs -o text
 
 # Search functions in Python, limit 20, compact
 toktoken search:symbols "parse" -ck function -L python -l20
@@ -229,6 +236,113 @@ toktoken inspect:tree -cd2
 toktoken search:symbols "init" -cnrs
 # equivalent to: --compact --count --regex --case-sensitive
 ```
+
+## Text Output
+
+`-o text` prints grep-style lines instead of a JSON document: same data,
+fewer bytes, no braces, no repeated field names, no string escaping. Use it
+when something is reading the result rather than parsing it.
+
+```bash
+toktoken search:symbols "widget_draw" -o text
+# src/widget.c:17:function widget_draw
+# n=1
+
+toktoken search:text "clamp" -C1 -o text
+# src/widget.c-4-// Internal helper.
+# src/widget.c:5:static int clamp(int v, int lo, int hi)
+# src/widget.c-6-{
+# n=1
+
+toktoken inspect:symbol "src/widget.c::widget_draw#function" -o text
+# // src/widget.c:17-25 function widget_draw
+# int widget_draw(Widget *w, const char *label)
+# {
+#     ...
+
+toktoken inspect:file src/widget.c --lines 17-20 -o text
+# 17: int widget_draw(Widget *w, const char *label)
+# 18: {
+# 19:     /* nothing to draw */
+# 20:     if (!w || !label)
+
+toktoken inspect:symbol "src/widget.c::widget_draw#function" -o text --grep "clamp|memcpy"
+# // src/widget.c:17-25 function widget_draw [grep: 2 of 9 lines]
+# 22:     int len = clamp((int)strlen(label), 0, w->width);
+# 23:     memcpy(w->name, label, len);
+
+toktoken inspect:symbol "src/widget.h::Widget#class" -o text --members
+# // src/widget.h:5-10 class Widget [member: 4]
+# 6: int width
+# 7: int height
+# 8: int (*draw)(struct Widget *w, const char *label)
+# 9: char name[32]
+
+toktoken search:text "clamp|width" -o text
+# src/widget.c:
+# 5:static int clamp(int v, int lo, int hi)
+# 22:int len = clamp((int)strlen(label), 0, w->width);
+# 31:w->width = 0;
+# src/widget.h:6:int width;
+# n=4
+```
+
+Line shapes:
+
+| Command | Shape |
+| ------- | ----- |
+| `search:symbols` | `file:line:kind name`. The symbol id is appended as ` id=...` only when it carries information the line does not already show (qualified names such as a parameter or a struct member, overload suffixes). |
+| `search:text` | `file:line:text` for hits, `file-line-text` for `-C` context lines (grep's own separator), then an `n=<count>` trailer. A file with two or more hits is printed once under a `file:` header, with `line:text` and `line-text` rows below it. |
+| `inspect:symbol` | `// file:line-end kind name` header, then the symbol's source. Misses in a batch print as `// not found: <id>`. |
+| `inspect:file` | `N: line`, using the file's real line numbers. |
+
+Both searches end with `n=<count>`. Modes with no grep equivalent
+(`--count`, `--group-by`) keep JSON output. The JSON contract itself is
+unchanged: `text` is a rendering of the same result, so MCP clients,
+savings tracking and scripts that parse JSON are unaffected.
+
+Add `--no-comments` to drop blank lines and lines that hold only a
+C-family comment:
+
+```bash
+toktoken inspect:file src/widget.c --lines 14-25 -o text --no-comments
+# 17: int widget_draw(Widget *w, const char *label)
+# 18: {
+# 20:     if (!w || !label)
+# 21:         return -1;
+```
+
+The line numbers still match the file, so a dropped comment never shifts
+them. Block comments are tracked across lines, which keeps a dereference
+such as `*p = 0;` while dropping the comment around it. Preprocessor
+directives are not comments and are kept.
+
+## Definition Lookup
+
+`--defs` turns `search:symbols` into an exact-name definition lookup. Pass
+several names in one call and get back only the definitions, without the
+noise a fuzzy search returns around them.
+
+```bash
+toktoken search:symbols widget_draw widget_reset nope --defs -o text
+# src/widget.c:17:function widget_draw
+# src/widget.c:27:function widget_reset
+# // not found: nope
+# n=2
+```
+
+What it drops, per name:
+
+- struct members and parameters (`variable`, `property`, and any qualified
+  name such as `Widget.draw` or `widget_draw.label`) when the name itself
+  has a real definition;
+- header prototypes when the same name is defined in a source file, so a
+  `.h` declaration and its `.c` body are not both paid for. A type that
+  only exists in a header is kept — it is the definition.
+
+Names left with nothing are reported in `not_found` (JSON) or as
+`// not found: <name>` (text). Combine with `-o text` and `--kind` for the
+cheapest way to pin down a symbol before an `inspect:symbol`.
 
 ## Diagnostic Mode
 
@@ -271,6 +385,24 @@ TokToken runs as a Model Context Protocol server for native integration with AI 
 ```bash
 toktoken serve
 ```
+
+### Text output from MCP tools
+
+`search_symbols`, `search_text`, `inspect_symbol` and `inspect_file` accept
+`format: "text"`. The server then sends the grep-style agent lines described
+in [Text Output](#text-output--format-text) as the tool result, instead of a
+JSON-escaped document — same data, fewer tokens.
+
+```json
+{ "name": "search_symbols",
+  "arguments": { "query": "widget_draw,widget_reset", "defs": true, "format": "text" } }
+// -> "src/widget.c:17:function widget_draw\nsrc/widget.c:27:function widget_reset\nn=2\n"
+```
+
+The matching options work in both transports: `defs` (exact-name definitions,
+several names comma-separated), `no_comments`, `grep`, and `members`. Text
+results carry no `_ttk` envelope — the envelope is what the flag is there to
+avoid. Omit `format` and the tool returns JSON exactly as before.
 
 ### Claude Code
 

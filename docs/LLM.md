@@ -239,6 +239,12 @@ toktoken index:update
 | `suggest` | Onboarding discovery: top keywords, kind/language distribution, most-imported files, example queries |
 | `help` | Get usage details for a TokToken tool, or list all tools |
 
+`search_symbols`, `search_text`, `inspect_symbol` and `inspect_file` accept
+`format: "text"`, which returns the grep-style agent lines described under
+Text output instead of a JSON document, and costs fewer tokens per call. The
+matching arguments work too: `defs` (comma-separated exact names),
+`no_comments`, `grep`, and `members`. Text results carry no `_ttk` envelope.
+
 ### CLI command reference
 
 #### search:symbols
@@ -255,6 +261,7 @@ toktoken search:symbols "auth" --no-sig --no-summary
 toktoken search:symbols "handler" --language go
 toktoken search:symbols "cache" --detail compact
 toktoken search:symbols "auth" --token-budget 2000
+toktoken search:symbols widget_draw widget_reset --defs -o text
 toktoken search:symbols "validator" --scope-imports-of src/Auth.php
 toktoken search:symbols "handler" --scope-importers-of src/Events/Dispatcher.php
 ```
@@ -279,6 +286,7 @@ toktoken search:symbols "handler" --scope-importers-of src/Events/Dispatcher.php
 | `--token-budget <n>` | Stop returning results once cumulative token estimate exceeds N |
 | `--scope-imports-of <file>` | Restrict results to symbols imported by the given file |
 | `--scope-importers-of <file>` | Restrict results to symbols found in files that import the given file |
+| `--defs` | Exact-name definitions only. Takes several names per call. Drops members/parameters and header prototypes when a real definition exists; misses go in `not_found` |
 
 #### search:text
 
@@ -315,7 +323,19 @@ toktoken inspect:outline src/Controller.php --no-sig --no-summary
 ```bash
 toktoken inspect:symbol "src/Auth.php::Auth.login#method"
 toktoken inspect:symbol "src/Auth.php::Auth.login#method" --context 5
+toktoken inspect:symbol "src/a.c::widget_draw#function" -o text --grep "clamp|memcpy"
+toktoken inspect:symbol "src/a.c::big_fn#function" -o text --grep return --no-comments
+toktoken inspect:symbol "src/a.h::Widget#class" -o text --members
 ```
+
+With `-o text`, `--grep <pat>` prints only the body lines that match the
+pattern (case-insensitive, `|`-separated alternatives), each with its real
+file line number, and the header records the cut as
+`[grep: K of N lines]`. With `--members`, a type symbol (`class`, `struct`,
+`union`, `enum`, `type`, `interface`, `trait`) is reduced to one row per
+member (`LINE: declaration`) with `[member: N]` in the header; multi-line
+declarations join, nested bodies collapse to `{...}`, and comments and
+preprocessor lines are dropped. JSON output is unaffected.
 
 #### inspect:bundle
 
@@ -368,6 +388,38 @@ toktoken inspect:tree --depth 2
 | `projects:list` | List all indexed projects |
 | `cache:clear` | Delete the index database |
 | `help [command]` | List all tools or show detailed usage for a specific tool |
+
+#### Text output (`-o text`)
+
+`-o text` renders the same result as grep-style lines instead of a JSON
+document. It costs fewer tokens per call: no braces, no repeated field
+names, no escaping. Prefer it when you will read the output yourself
+rather than parse it.
+
+```bash
+toktoken search:symbols "widget_draw" -o text   # file:line:kind name
+toktoken search:text "clamp" -C1 -o text        # file:line:text, n=<count>
+toktoken inspect:symbol "src/a.c::f#function" -o text  # header + source
+toktoken inspect:file src/a.c --lines 10-20 -o text    # N: line
+```
+
+| Command | Text shape |
+| ------- | ---------- |
+| `search:symbols` | `file:line:kind name`, with ` id=...` only when the id is not derivable from the line; ends with `n=<count>` |
+| `search:text` | `file:line:text` for hits, `file-line-text` for `-C` context lines; ends with `n=<count>`. A file with 2+ hits prints once under a `file:` header with `line:text` rows. |
+| `inspect:symbol` | `// file:line-end kind name` then the source; misses print `// not found: <id>` |
+| `inspect:file` | `N: line` with the file's real line numbers |
+
+`--count` and `--group-by` have no grep equivalent and keep JSON. The JSON
+contract is unchanged, so MCP clients and scripts are unaffected.
+
+Add `--no-comments` with `-o text` to drop blank lines and comment-only
+lines from `inspect:symbol`, `inspect:file`, and `search:text` context.
+Line numbers still match the file, and hit lines are never dropped.
+
+```bash
+toktoken inspect:file src/a.c --lines 10-20 -o text --no-comments
+```
 
 ---
 

@@ -1028,6 +1028,123 @@ TT_TEST(test_int_mcp_ttk_envelope)
 }
 
 /* ================================================================
+ * format="text": agent lines instead of a JSON document
+ * ================================================================ */
+
+TT_TEST(test_int_mcp_text_format)
+{
+    create_indexed_project();
+
+    mcp_test_server_t ts;
+    TT_ASSERT(start_test_server(&ts, fixture_dir) == 0, "start server with fixture");
+    TT_ASSERT(do_initialize(&ts) == 0, "initialize");
+
+    /* search_symbols: grep-style lines, no envelope */
+    {
+        char msg[1024];
+        snprintf(msg, sizeof(msg),
+                 "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"id\":20,"
+                 "\"params\":{\"name\":\"search_symbols\",\"arguments\":"
+                 "{\"query\":\"main\",\"path\":\"%s\",\"format\":\"text\"}}}",
+                 fixture_dir);
+        send_message(&ts, msg);
+        cJSON *resp = read_json_response(&ts, 3000);
+        TT_ASSERT_NOT_NULL(resp);
+        if (!resp) return;
+
+        cJSON *result = cJSON_GetObjectItemCaseSensitive(resp, "result");
+        TT_ASSERT_FALSE(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(result, "isError")));
+        cJSON *content = cJSON_GetObjectItemCaseSensitive(result, "content");
+        const char *text = cJSON_GetStringValue(
+            cJSON_GetObjectItemCaseSensitive(cJSON_GetArrayItem(content, 0), "text"));
+
+        TT_ASSERT(text && text[0] != '{', "text output is not a JSON document");
+        TT_ASSERT_STR_CONTAINS(text, "src/main.c:");
+        TT_ASSERT_STR_CONTAINS(text, "n=");
+        TT_ASSERT(!strstr(text, "_ttk"), "text output carries no envelope");
+        cJSON_Delete(resp);
+    }
+
+    /* inspect_file: numbered lines */
+    {
+        char msg[1024];
+        snprintf(msg, sizeof(msg),
+                 "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"id\":21,"
+                 "\"params\":{\"name\":\"inspect_file\",\"arguments\":"
+                 "{\"file\":\"src/main.c\",\"path\":\"%s\",\"format\":\"text\"}}}",
+                 fixture_dir);
+        send_message(&ts, msg);
+        cJSON *resp = read_json_response(&ts, 3000);
+        TT_ASSERT_NOT_NULL(resp);
+        if (!resp) return;
+
+        cJSON *result = cJSON_GetObjectItemCaseSensitive(resp, "result");
+        cJSON *content = cJSON_GetObjectItemCaseSensitive(result, "content");
+        const char *text = cJSON_GetStringValue(
+            cJSON_GetObjectItemCaseSensitive(cJSON_GetArrayItem(content, 0), "text"));
+
+        TT_ASSERT(text && text[0] != '{', "inspect_file text is not JSON");
+        TT_ASSERT_STR_CONTAINS(text, "1: #include <stdio.h>\n");
+        cJSON_Delete(resp);
+    }
+
+    /* inspect_symbol: source with a header line */
+    {
+        char msg[1024];
+        snprintf(msg, sizeof(msg),
+                 "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"id\":22,"
+                 "\"params\":{\"name\":\"inspect_symbol\",\"arguments\":"
+                 "{\"id\":\"src/main.c::main#function\",\"path\":\"%s\","
+                 "\"format\":\"text\",\"no_comments\":true}}}",
+                 fixture_dir);
+        send_message(&ts, msg);
+        cJSON *resp = read_json_response(&ts, 3000);
+        TT_ASSERT_NOT_NULL(resp);
+        if (!resp) return;
+
+        cJSON *result = cJSON_GetObjectItemCaseSensitive(resp, "result");
+        TT_ASSERT_FALSE(cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(result, "isError")));
+        cJSON *content = cJSON_GetObjectItemCaseSensitive(result, "content");
+        const char *text = cJSON_GetStringValue(
+            cJSON_GetObjectItemCaseSensitive(cJSON_GetArrayItem(content, 0), "text"));
+
+        TT_ASSERT_STR_CONTAINS(text, "// src/main.c:");
+        TT_ASSERT_STR_CONTAINS(text, "int main(int argc, char **argv) {");
+        cJSON_Delete(resp);
+    }
+
+    /* JSON stays the default and keeps its envelope */
+    {
+        char msg[1024];
+        snprintf(msg, sizeof(msg),
+                 "{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"id\":23,"
+                 "\"params\":{\"name\":\"search_symbols\",\"arguments\":"
+                 "{\"query\":\"main\",\"path\":\"%s\"}}}", fixture_dir);
+        send_message(&ts, msg);
+        cJSON *resp = read_json_response(&ts, 3000);
+        TT_ASSERT_NOT_NULL(resp);
+        if (!resp) return;
+
+        cJSON *result = cJSON_GetObjectItemCaseSensitive(resp, "result");
+        cJSON *content = cJSON_GetObjectItemCaseSensitive(result, "content");
+        const char *text = cJSON_GetStringValue(
+            cJSON_GetObjectItemCaseSensitive(cJSON_GetArrayItem(content, 0), "text"));
+        cJSON *inner = cJSON_Parse(text);
+        TT_ASSERT_NOT_NULL(inner);
+        if (inner)
+        {
+            TT_ASSERT_NOT_NULL(cJSON_GetObjectItemCaseSensitive(inner, "results"));
+            TT_ASSERT_NOT_NULL(cJSON_GetObjectItemCaseSensitive(inner, "_ttk"));
+            cJSON_Delete(inner);
+        }
+        cJSON_Delete(resp);
+    }
+
+    stop_test_server(&ts);
+    cleanup_fixture();
+}
+
+/* ================================================================
  * Runner
  * ================================================================ */
 
@@ -1048,4 +1165,5 @@ void run_int_mcp_server_tests(void)
     TT_RUN(test_int_mcp_broken_pipe);         /* K */
     TT_RUN(test_int_mcp_lazy_db);             /* L */
     TT_RUN(test_int_mcp_ttk_envelope);         /* M */
+    TT_RUN(test_int_mcp_text_format);          /* N */
 }

@@ -754,31 +754,48 @@ static cJSON *mcp_handle_tools_call(tt_mcp_server_t *srv,
         tool_result = mcp_tool_error(tt_error_get());
     }
 
-    /* Inject _ttk envelope into tool_result */
-    cJSON *tt = cJSON_CreateObject();
-    cJSON_AddStringToObject(tt, "timestamp", tt_now_rfc3339());
-    cJSON_AddNumberToObject(tt, "duration_ms", (double)elapsed_ms);
-    cJSON_AddStringToObject(tt, "version", TT_VERSION);
-
-    /* Inject staleness signal (cached, ~0ms when warm) */
-    mcp_inject_staleness(srv, tt);
-
-    /* Inject update-available signal (cached, ~0ms when warm) */
+    /*
+     * A tool that rendered agent lines hands them over in "_text". Those go
+     * to the client verbatim: wrapping them in a JSON document (and an
+     * envelope) is exactly the overhead the caller asked to avoid.
+     */
+    const char *pre_rendered = NULL;
     {
-        tt_update_info_t uinfo = tt_update_check();
-        if (uinfo.update_available) {
-            cJSON_AddStringToObject(tt, "update_available", uinfo.upstream_version);
-        }
-        tt_update_info_free(&uinfo);
+        cJSON *tf = cJSON_GetObjectItemCaseSensitive(tool_result, "_text");
+        if (tf && cJSON_IsString(tf))
+            pre_rendered = cJSON_GetStringValue(tf);
     }
 
-    /* Inject next-step suggestions for LLM workflow guidance */
-    mcp_inject_next_steps(name, tool_result, tt);
+    cJSON *tt = NULL;
+    if (!pre_rendered)
+    {
+        /* Inject _ttk envelope into tool_result */
+        tt = cJSON_CreateObject();
+        cJSON_AddStringToObject(tt, "timestamp", tt_now_rfc3339());
+        cJSON_AddNumberToObject(tt, "duration_ms", (double)elapsed_ms);
+        cJSON_AddStringToObject(tt, "version", TT_VERSION);
 
-    cJSON_AddItemToObject(tool_result, "_ttk", tt);
+        /* Inject staleness signal (cached, ~0ms when warm) */
+        mcp_inject_staleness(srv, tt);
+
+        /* Inject update-available signal (cached, ~0ms when warm) */
+        {
+            tt_update_info_t uinfo = tt_update_check();
+            if (uinfo.update_available) {
+                cJSON_AddStringToObject(tt, "update_available", uinfo.upstream_version);
+            }
+            tt_update_info_free(&uinfo);
+        }
+
+        /* Inject next-step suggestions for LLM workflow guidance */
+        mcp_inject_next_steps(name, tool_result, tt);
+
+        cJSON_AddItemToObject(tool_result, "_ttk", tt);
+    }
 
     /* Serialize tool result to text */
-    char *text = cJSON_PrintUnformatted(tool_result);
+    char *text = pre_rendered ? strdup(pre_rendered)
+                              : cJSON_PrintUnformatted(tool_result);
 
     /* Determine if this is a tool-level error */
     bool is_error = false;

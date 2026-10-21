@@ -19,6 +19,7 @@
 #include "hashmap.h"
 #include "token_savings.h"
 #include "symbol_scorer.h"
+#include "text_render.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -240,8 +241,21 @@ static int free_cache_entry(const char *key, void *value, void *userdata)
 
 /* ---- search:symbols ---- */
 
+static char **collect_defs_names(const tt_cli_opts_t *opts, int *out_count);
+
 cJSON *tt_cmd_search_symbols_exec(tt_cli_opts_t *opts)
 {
+    /* --defs resolves exact names instead of running a fuzzy search */
+    if (opts->defs)
+    {
+        int name_count = 0;
+        char **names = collect_defs_names(opts, &name_count);
+        cJSON *result = tt_cmd_search_defs_exec(opts, (const char *const *)names,
+                                                name_count);
+        tt_str_split_free(names);
+        return result;
+    }
+
     tt_timer_start();
 
     /* Resolve project path */
@@ -1104,6 +1118,341 @@ cJSON *tt_cmd_search_text_exec(tt_cli_opts_t *opts)
     return result;
 }
 
+/* ================================================================
+ * --defs: exact-name definitions for search:symbols
+ *
+ * Looks each name up verbatim and keeps the definitions an agent
+ * actually wants, dropping the noise around them: struct members and
+ * parameters, and header prototypes whose body is indexed elsewhere.
+ * Names left with nothing are reported in "not_found".
+ * ================================================================ */
+
+/* True when the extension marks a declaration file rather than a definition file. */
+static bool path_is_header_file(const char *file)
+{
+    static const char *exts[] = { "h", "hpp", "hxx", "h++", "hh", "inl", "ipp", "def", NULL };
+    if (!file)
+        return false;
+
+    const char *dot = strrchr(file, '.');
+    if (!dot || !dot[1])
+        return false;
+
+    char *lower = tt_str_tolower(dot + 1);
+    bool is_header = false;
+    if (lower)
+    {
+        for (int i = 0; exts[i]; i++)
+        {
+            if (strcmp(lower, exts[i]) == 0)
+            {
+                is_header = true;
+                break;
+            }
+        }
+        free(lower);
+    }
+    return is_header;
+}
+
+/* True when the symbol is a member or parameter of something larger. */
+static bool sym_is_member_like(const tt_symbol_t *s)
+{
+    if (s->qualified_name && strchr(s->qualified_name, '.'))
+        return true;
+    return s->kind == TT_KIND_VARIABLE || s->kind == TT_KIND_PROPERTY;
+}
+
+/*
+ * tt_cmd_search_defs_exec -- Resolve exact-name definitions.
+ *
+ * names: exact symbol names, several per call. Returns the same shape as
+ * search:symbols ("q", "results", "n") plus "not_found" for names with no
+ * definition, and "defs": true so the caller can tell the mode apart.
+ * The caller owns the cJSON document.
+ */
+cJSON *tt_cmd_search_defs_exec(tt_cli_opts_t *opts, const char *const *names,
+                               int name_count)
+{
+    char *project_path = tt_resolve_project_path(opts->path);
+    if (!project_path)
+    {
+        tt_error_set("Failed to resolve project path");
+        return NULL;
+    }
+
+    if (!tt_database_exists(project_path))
+    {
+        cJSON *err = make_error("no_index",
+                                "No index found.",
+                                "Run \"toktoken index:create\" first.");
+        free(project_path);
+        return err;
+    }
+
+    if (name_count <= 0 || !names)
+    {
+        free(project_path);
+        return make_error("invalid_value",
+                          "--defs needs at least one symbol name.",
+                          "Pass exact names: search:symbols --defs name1 name2");
+    }
+
+    int kind_count = 0;
+    char *invalid_kind = NULL;
+    const char **kinds = parse_kinds(opts->kind, &kind_count, &invalid_kind);
+    if (invalid_kind)
+    {
+        cJSON *err = make_error("invalid_kind", "Unknown kind filter value.",
+                                "Valid kinds: class, interface, trait, enum, function, "
+                                "method, constant, property, variable, namespace, type, "
+                                "directive, chapter, section, subsection");
+        cJSON_AddStringToObject(err, "invalid_value", invalid_kind);
+        free(invalid_kind);
+        free((void *)kinds);
+        free(project_path);
+        return err;
+    }
+
+    tt_database_t db;
+    memset(&db, 0, sizeof(db));
+    if (tt_database_open(&db, project_path) < 0)
+    {
+        free((void *)kinds);
+        free(project_path);
+        return make_error("storage_error", "Failed to open database", NULL);
+    }
+
+    tt_index_store_t store;
+    if (tt_store_init(&store, &db) < 0)
+    {
+        free((void *)kinds);
+        tt_database_close(&db);
+        free(project_path);
+        return make_error("storage_error", "Failed to prepare statements", NULL);
+    }
+
+    int per_name_max = opts->max > 0 ? opts->max : 50;
+    if (per_name_max > 200)
+        per_name_max = 200;
+
+    tt_search_results_t *sr = calloc((size_t)name_count, sizeof(tt_search_results_t));
+    bool **keep = calloc((size_t)name_count, sizeof(bool *));
+    if (!sr || !keep)
+    {
+        free(sr);
+        free(keep);
+        free((void *)kinds);
+        tt_store_close(&store);
+        tt_database_close(&db);
+        free(project_path);
+        return make_error("storage_error", "Out of memory", NULL);
+    }
+
+    /* Pass 1: exact-name matches only, honouring --filter/--exclude/--kind. */
+    for (int i = 0; i < name_count; i++)
+    {
+        if (tt_store_search_symbols(&store, names[i], kinds, kind_count,
+                                    opts->language, opts->file_glob,
+                                    per_name_max, false, &sr[i]) < 0)
+        {
+            cJSON *err = make_error("search_error", tt_error_get(), NULL);
+            for (int j = 0; j <= i; j++)
+                tt_search_results_free(&sr[j]);
+            free(sr);
+            for (int j = 0; j < name_count; j++)
+                free(keep[j]);
+            free(keep);
+            free((void *)kinds);
+            tt_store_close(&store);
+            tt_database_close(&db);
+            free(project_path);
+            return err;
+        }
+
+        keep[i] = calloc((size_t)(sr[i].count > 0 ? sr[i].count : 1), sizeof(bool));
+        for (int j = 0; j < sr[i].count; j++)
+        {
+            const tt_symbol_t *s = &sr[i].results[j].sym;
+            bool exact = s->name && strcmp(s->name, names[i]) == 0;
+            bool in_scope = tt_matches_path_filters(s->file, opts->filter, opts->exclude);
+            keep[i][j] = exact && in_scope;
+        }
+    }
+
+    /* Pass 2: drop members when a real definition exists, and header
+     * prototypes when the same name is defined in a source file. */
+    int kept_total = 0;
+    for (int i = 0; i < name_count; i++)
+    {
+        bool has_definition = false;
+        bool defined_in_source = false;
+        for (int j = 0; j < sr[i].count; j++)
+        {
+            if (!keep[i][j])
+                continue;
+            const tt_symbol_t *s = &sr[i].results[j].sym;
+            if (!sym_is_member_like(s))
+            {
+                has_definition = true;
+                if (!path_is_header_file(s->file))
+                    defined_in_source = true;
+            }
+        }
+
+        for (int j = 0; j < sr[i].count; j++)
+        {
+            if (!keep[i][j])
+                continue;
+            const tt_symbol_t *s = &sr[i].results[j].sym;
+            if (has_definition && sym_is_member_like(s))
+            {
+                keep[i][j] = false;
+                continue;
+            }
+            if (defined_in_source && path_is_header_file(s->file))
+            {
+                keep[i][j] = false;
+                continue;
+            }
+            kept_total++;
+        }
+
+        if (opts->limit > 0)
+        {
+            int used = 0;
+            for (int j = 0; j < sr[i].count; j++)
+            {
+                if (!keep[i][j])
+                    continue;
+                if (used >= opts->limit)
+                {
+                    keep[i][j] = false;
+                    kept_total--;
+                    continue;
+                }
+                used++;
+            }
+        }
+    }
+
+    /* Build the document */
+    detail_level_e detail = parse_detail(opts->detail, opts->compact);
+    cJSON *result = cJSON_CreateObject();
+
+    tt_strbuf_t qbuf;
+    tt_strbuf_init(&qbuf);
+    for (int i = 0; i < name_count; i++)
+    {
+        if (i > 0)
+            tt_strbuf_append_char(&qbuf, ' ');
+        tt_strbuf_append_str(&qbuf, names[i] ? names[i] : "");
+    }
+    cJSON_AddStringToObject(result, "q", qbuf.data ? qbuf.data : "");
+    tt_strbuf_free(&qbuf);
+
+    cJSON_AddBoolToObject(result, "defs", 1);
+
+    cJSON *results_array = cJSON_CreateArray();
+    cJSON_AddItemToObject(result, "results", results_array);
+
+    int emitted = 0;
+    for (int i = 0; i < name_count; i++)
+    {
+        for (int j = 0; j < sr[i].count; j++)
+        {
+            if (!keep[i][j])
+                continue;
+            cJSON *item = format_symbol_result(&sr[i].results[j], detail,
+                                               opts->no_sig, opts->no_summary, NULL);
+            if (!item)
+                continue;
+            cJSON_AddItemToArray(results_array, item);
+            emitted++;
+        }
+    }
+    cJSON_AddNumberToObject(result, "n", emitted);
+
+    cJSON *not_found = cJSON_CreateArray();
+    bool any_missing = false;
+    for (int i = 0; i < name_count; i++)
+    {
+        bool found = false;
+        for (int j = 0; j < sr[i].count && !found; j++)
+            if (keep[i][j])
+                found = true;
+        if (!found)
+        {
+            cJSON_AddItemToArray(not_found, cJSON_CreateString(names[i] ? names[i] : ""));
+            any_missing = true;
+        }
+    }
+    if (any_missing)
+        cJSON_AddItemToObject(result, "not_found", not_found);
+    else
+        cJSON_Delete(not_found);
+
+    /* Savings tracking uses the same accounting as the plain search. */
+    int64_t raw_bytes = 0;
+    {
+        const char **sf = calloc((size_t)(kept_total > 0 ? kept_total : 1), sizeof(char *));
+        int k = 0;
+        for (int i = 0; i < name_count && sf; i++)
+            for (int j = 0; j < sr[i].count && k < kept_total; j++)
+                if (keep[i][j])
+                    sf[k++] = sr[i].results[j].sym.file;
+        if (sf)
+            raw_bytes = tt_savings_raw_from_file_sizes(project_path, sf, k);
+        free(sf);
+    }
+    tt_savings_track(&db, "search_symbols", raw_bytes, result);
+
+    for (int i = 0; i < name_count; i++)
+    {
+        tt_search_results_free(&sr[i]);
+        free(keep[i]);
+    }
+    free(sr);
+    free(keep);
+    free((void *)kinds);
+    tt_store_close(&store);
+    tt_database_close(&db);
+    free(project_path);
+
+    return result;
+}
+
+/*
+ * Collect the --defs names: positional args, or --search split on spaces.
+ * The array and every entry are owned; release with tt_str_split_free().
+ */
+static char **collect_defs_names(const tt_cli_opts_t *opts, int *out_count)
+{
+    *out_count = 0;
+
+    if (opts->positional_count > 0 && opts->positional)
+    {
+        char **names = calloc((size_t)opts->positional_count + 1, sizeof(char *));
+        if (!names)
+            return NULL;
+        for (int i = 0; i < opts->positional_count; i++)
+            names[i] = tt_strdup(opts->positional[i] ? opts->positional[i] : "");
+        names[opts->positional_count] = NULL;
+        *out_count = opts->positional_count;
+        return names;
+    }
+
+    if (opts->search && opts->search[0])
+    {
+        char **names = tt_str_split(opts->search, ' ', out_count);
+        if (!names)
+            *out_count = 0;
+        return names;
+    }
+
+    return NULL;
+}
+
 /* ---- CLI wrappers ---- */
 
 int tt_cmd_search_symbols(tt_cli_opts_t *opts)
@@ -1122,6 +1471,19 @@ int tt_cmd_search_symbols(tt_cli_opts_t *opts)
         tt_json_print(result);
         cJSON_Delete(result);
         return 1;
+    }
+
+    if (tt_text_format_requested(opts))
+    {
+        char *text = tt_render_search_symbols_text(result);
+        if (text)
+        {
+            fputs(text, stdout);
+            fflush(stdout);
+            free(text);
+            cJSON_Delete(result);
+            return 0;
+        }
     }
 
     tt_json_print(result);
@@ -1144,6 +1506,19 @@ int tt_cmd_search_text(tt_cli_opts_t *opts)
         tt_json_print(result);
         cJSON_Delete(result);
         return 1;
+    }
+
+    if (tt_text_format_requested(opts))
+    {
+        char *text = tt_render_search_text_text(result, opts->no_comments);
+        if (text)
+        {
+            fputs(text, stdout);
+            fflush(stdout);
+            free(text);
+            cJSON_Delete(result);
+            return 0;
+        }
     }
 
     tt_json_print(result);

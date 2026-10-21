@@ -66,13 +66,17 @@ search.
 ## Key Flags (always use for efficiency)
 
 - `--detail compact` on search:symbols -- returns only id/name/kind/file/line
+- `-o text` -- grep-style agent lines instead of a JSON document (cheapest output)
 - `--compact` on inspect:symbol/bundle -- shorter JSON keys
 - `--exclude test|deps|vendor` -- filter noise on initial exploration
 - `--limit N` -- always cap search results (10-15 for discovery, 5 for targeted)
 - `--token-budget N` -- hard cap on response token size
 - `--kind function,method,class` -- filter by symbol type
+- `--defs name1 name2` on search:symbols -- exact-name definitions only, no members or header prototypes
+- `--members` on inspect:symbol -- one row per struct/enum member instead of the full source
 
 Other flags: `--filter` (include path), `--group-by file` (text search),
+`--no-comments` (drop blank/comment lines with `-o text`),
 `--count` (count-only), `--context N` (lines around matches),
 `--no-sig --no-summary` (minimal search output), `--sort name|file|line`,
 `--scope-imports-of <file>`, `--scope-importers-of <file>`,

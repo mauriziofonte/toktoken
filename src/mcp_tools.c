@@ -18,6 +18,8 @@
 #include "cmd_bundle.h"
 #include "cmd_suggest.h"
 #include "cmd_help.h"
+#include "text_render.h"
+#include "str_util.h"
 #include "error.h"
 
 #include <stdlib.h>
@@ -96,6 +98,52 @@ static void add_string_array_prop(cJSON *props, const char *name, const char *de
     cJSON_AddItemToObject(p, "items", items);
     cJSON_AddStringToObject(p, "description", desc);
     cJSON_AddItemToObject(props, name, p);
+}
+
+/* "format": json (default) or text. Documented on the four data tools. */
+static void add_format_prop(cJSON *props)
+{
+    add_string_prop(props, "format",
+                    "Output format: \"json\" (default) or \"text\". "
+                    "text returns grep-style agent lines, which cost fewer "
+                    "tokens than the JSON document for the same data.");
+}
+
+/* "no_comments": drop blank and comment lines from text output. */
+static void add_no_comments_prop(cJSON *props)
+{
+    add_boolean_prop(props, "no_comments",
+                     "With format=\"text\", drop blank lines and comment-only "
+                     "lines. Line numbers still match the file.");
+}
+
+/* True when the caller asked for text output. */
+static bool mcp_format_is_text(const cJSON *arguments)
+{
+    if (!arguments)
+        return false;
+
+    const char *v = cJSON_GetStringValue(
+        cJSON_GetObjectItemCaseSensitive(arguments, "format"));
+    return v && strcmp(v, "text") == 0;
+}
+
+/*
+ * Hand the rendered lines to the server. The server sends a "_text" result
+ * verbatim as the tool content instead of JSON-escaping a document. When
+ * the renderer declines (a mode with no text equivalent), the JSON result
+ * is returned unchanged.
+ */
+static cJSON *mcp_text_result(cJSON *result, char *text)
+{
+    if (!text)
+        return result;
+
+    cJSON *out = cJSON_CreateObject();
+    cJSON_AddStringToObject(out, "_text", text);
+    free(text);
+    cJSON_Delete(result);
+    return out;
 }
 
 static cJSON *make_schema_with_path_only(void)
@@ -198,6 +246,12 @@ static cJSON *schema_search_symbols(void)
                     "Scope search to files imported by this file (forward import graph)");
     add_string_prop(props, "scope_importers_of",
                     "Scope search to files that import this file (reverse import graph)");
+    add_boolean_prop(props, "defs",
+                     "Exact-name definition lookup instead of a fuzzy search. "
+                     "Pass several names separated by commas. Keeps real "
+                     "definitions and drops members and header prototypes; "
+                     "names with no definition are listed in not_found.");
+    add_format_prop(props);
 
     cJSON_AddItemToObject(s, "properties", props);
 
@@ -228,6 +282,8 @@ static cJSON *schema_search_text(void)
     add_boolean_prop(props, "case_sensitive", "Use case-sensitive matching");
     add_boolean_prop(props, "is_regex", "Treat query as a regex pattern");
     add_string_prop(props, "file", "Filter by file glob pattern");
+    add_format_prop(props);
+    add_no_comments_prop(props);
 
     cJSON_AddItemToObject(s, "properties", props);
 
@@ -274,6 +330,16 @@ static cJSON *schema_inspect_symbol(void)
     add_string_prop(props, "path", "Project root path (default: cwd)");
     add_boolean_prop(props, "compact", "Use compact output format");
     add_integer_prop(props, "context", "Extra context lines around symbol source");
+    add_format_prop(props);
+    add_no_comments_prop(props);
+    add_string_prop(props, "grep",
+                    "With format=\"text\", print only the body lines matching this "
+                    "pattern (case-insensitive, pipe-separated alternatives). "
+                    "The header reports how many lines survived.");
+    add_boolean_prop(props, "members",
+                     "With format=\"text\", render a class, struct, union, enum, "
+                     "type, interface or trait as one row per member instead of "
+                     "its full source.");
 
     cJSON_AddItemToObject(s, "properties", props);
 
@@ -293,6 +359,8 @@ static cJSON *schema_inspect_file(void)
     add_string_prop(props, "file", "Relative file path");
     add_string_prop(props, "path", "Project root path (default: cwd)");
     add_string_prop(props, "lines", "Line range \"start-end\"");
+    add_format_prop(props);
+    add_no_comments_prop(props);
 
     cJSON_AddItemToObject(s, "properties", props);
 
@@ -527,11 +595,30 @@ static cJSON *execute_search_symbols(struct tt_mcp_server_t *srv,
         if (v) opts.scope_imports_of = v;
         v = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(arguments, "scope_importers_of"));
         if (v) opts.scope_importers_of = v;
+
+        opts.defs = mcp_get_bool(arguments, "defs");
     }
 
-    cJSON *result = tt_cmd_search_symbols_exec(&opts);
+    cJSON *result;
+    if (opts.defs)
+    {
+        /* --defs takes several exact names, comma-separated in the query */
+        int name_count = 0;
+        char **names = tt_str_split(query, ',', &name_count);
+        result = tt_cmd_search_defs_exec(&opts, (const char *const *)names, name_count);
+        tt_str_split_free(names);
+    }
+    else
+    {
+        result = tt_cmd_search_symbols_exec(&opts);
+    }
+
     if (!result)
         return mcp_tool_error(tt_error_get());
+
+    if (mcp_format_is_text(arguments))
+        return mcp_text_result(result, tt_render_search_symbols_text(result));
+
     return result;
 }
 
@@ -573,11 +660,16 @@ static cJSON *execute_search_text(struct tt_mcp_server_t *srv,
         opts.count = mcp_get_bool(arguments, "count");
         opts.case_sensitive = mcp_get_bool(arguments, "case_sensitive");
         opts.regex = mcp_get_bool(arguments, "is_regex");
+        opts.no_comments = mcp_get_bool(arguments, "no_comments");
     }
 
     cJSON *result = tt_cmd_search_text_exec(&opts);
     if (!result)
         return mcp_tool_error(tt_error_get());
+
+    if (mcp_format_is_text(arguments))
+        return mcp_text_result(result, tt_render_search_text_text(result, opts.no_comments));
+
     return result;
 }
 
@@ -650,6 +742,12 @@ static cJSON *execute_inspect_symbol(struct tt_mcp_server_t *srv,
     {
         opts.compact = mcp_get_bool(arguments, "compact");
         opts.context = mcp_get_int_or_default(arguments, "context", 0);
+        opts.no_comments = mcp_get_bool(arguments, "no_comments");
+        opts.members = mcp_get_bool(arguments, "members");
+        const char *gv = cJSON_GetStringValue(
+            cJSON_GetObjectItemCaseSensitive(arguments, "grep"));
+        if (gv)
+            opts.grep = gv;
     }
 
     int exit_code = 0;
@@ -657,6 +755,12 @@ static cJSON *execute_inspect_symbol(struct tt_mcp_server_t *srv,
     free(id_buf);
     if (!result)
         return mcp_tool_error(tt_error_get());
+
+    if (mcp_format_is_text(arguments))
+        return mcp_text_result(result,
+                               tt_render_inspect_symbol_text(result, opts.no_comments,
+                                                             opts.grep, opts.members));
+
     return result;
 }
 
@@ -684,11 +788,16 @@ static cJSON *execute_inspect_file(struct tt_mcp_server_t *srv,
         v = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(arguments, "lines"));
         if (v)
             opts.lines = v;
+        opts.no_comments = mcp_get_bool(arguments, "no_comments");
     }
 
     cJSON *result = tt_cmd_inspect_file_exec(&opts);
     if (!result)
         return mcp_tool_error(tt_error_get());
+
+    if (mcp_format_is_text(arguments))
+        return mcp_text_result(result, tt_render_inspect_file_text(result, opts.no_comments));
+
     return result;
 }
 

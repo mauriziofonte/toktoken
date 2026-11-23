@@ -180,8 +180,17 @@ static inline int tt_e2e_run_raw(const char *cmd_args, char **out_stdout)
     (void)argc;
 
     tt_proc_result_t r = tt_proc_run(argv, NULL, 0);
-    if (out_stdout)
+    if (out_stdout) {
         *out_stdout = r.stdout_buf ? tt_strdup(r.stdout_buf) : NULL;
+        /* Windows stdout is in text mode (\n -> \r\n): compare content as LF. */
+        if (*out_stdout) {
+            char *w = *out_stdout;
+            for (const char *p = *out_stdout; *p; p++)
+                if (!(p[0] == '\r' && p[1] == '\n'))
+                    *w++ = *p;
+            *w = '\0';
+        }
+    }
 
     int exit_code = r.exit_code;
     tt_proc_result_free(&r);

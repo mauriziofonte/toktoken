@@ -125,7 +125,8 @@ jobs:
                       smoke_cmd: ./build/toktoken --version
 
                     - target: linux-armv7
-                      runner: ubuntu-latest
+                      # 24.04: qemu-user-static is a virtual package on 26.04
+                      runner: ubuntu-24.04
                       pkg: gcc-arm-linux-gnueabihf libc6-dev-armhf-cross qemu-user-static
                       cmake_flags: '-DTT_STATIC=ON -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-armv7hf.cmake'
                       strip_cmd: arm-linux-gnueabihf-strip

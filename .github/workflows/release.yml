@@ -36,7 +36,7 @@ jobs:
                   fi
                   echo "version=$cmake_ver" >> "$GITHUB_OUTPUT"
 
-    # ── 2. Test gate: Linux, Debug with ASan/UBSan ──────────────────────
+    # ── 2. Test gate: Linux + macOS, Debug with ASan/UBSan ──────────────
     test:
         needs: [validate]
         strategy:
@@ -46,6 +46,9 @@ jobs:
                     - os: ubuntu-latest
                       deps: sudo apt-get update && sudo apt-get install -y --no-install-recommends universal-ctags
                       nproc_cmd: nproc
+                    - os: macos-latest
+                      deps: brew install universal-ctags
+                      nproc_cmd: 'sysctl -n hw.ncpu'
         runs-on: ${{ matrix.os }}
         timeout-minutes: 15
         steps:
@@ -176,7 +179,64 @@ jobs:
                   name: toktoken-${{ matrix.target }}
                   path: build/toktoken
 
-    # ── 4. Build Windows (x86_64, MinGW cross-compilation) ─────────────
+    # ── 4. Build macOS (x86_64 + aarch64, dynamic libSystem only) ──────
+    build-macos:
+        needs: [test, test-windows]
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - target: macos-x86_64
+                      runner: macos-latest
+                      arch: x86_64
+                    - target: macos-aarch64
+                      runner: macos-latest
+                      arch: arm64
+
+        runs-on: ${{ matrix.runner }}
+        timeout-minutes: 15
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Configure
+              run: |
+                  cmake -B build \
+                    -DCMAKE_BUILD_TYPE=Release \
+                    -DBUILD_TESTS=OFF \
+                    -DTT_STATIC=ON \
+                    -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }}
+
+            - name: Build
+              run: cmake --build build -j$(sysctl -n hw.ncpu)
+
+            - name: Strip binary
+              run: |
+                  ls -lh build/toktoken
+                  strip build/toktoken
+                  ls -lh build/toktoken
+
+            - name: Verify dependencies
+              run: |
+                  file build/toktoken
+                  otool -L build/toktoken
+                  unexpected=$(otool -L build/toktoken | tail -n +2 | grep -cv "libSystem.B.dylib" || true)
+                  if [ "$unexpected" -ne 0 ]; then
+                    echo "::error::Unexpected dynamic dependencies found"
+                    otool -L build/toktoken
+                    exit 1
+                  fi
+                  echo "OK: only libSystem.B.dylib"
+
+            - name: Smoke test
+              run: ./build/toktoken --version
+
+            - uses: actions/upload-artifact@v4
+              with:
+                  name: toktoken-${{ matrix.target }}
+                  path: build/toktoken
+
+
+    # ── 5. Build Windows (x86_64, MinGW cross-compilation) ─────────────
     build-windows:
         needs: [test, test-windows]
         strategy:
@@ -228,9 +288,9 @@ jobs:
                   name: toktoken-${{ matrix.target }}.exe
                   path: build/toktoken.exe
 
-    # ── 5. Release: collect artifacts, checksum, publish ────────────────
+    # ── 6. Release: collect artifacts, checksum, publish ────────────────
     release:
-        needs: [validate, build-linux, build-windows]
+        needs: [validate, build-linux, build-macos, build-windows]
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4

@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-11-23
+
+### Added
+
+- **Agent-line text output** (`-o text` / MCP `format: "text"`) for `search:symbols`, `search:text`, `inspect:symbol` and `inspect:file`: grep-style lines instead of a JSON document, same data, fewer bytes. Over MCP the rendered lines are sent verbatim, without the `_ttk` envelope. JSON output is unchanged ([#7](https://github.com/mauriziofonte/toktoken/pull/7), by Macpaul Lin).
+- **`--defs`** on `search:symbols`: exact-name definition lookup for several names per call; drops members/parameters and header prototypes when a real definition exists; misses reported in `not_found`.
+- **`--grep <pat>`** and **`--members`** on `inspect:symbol -o text`: only matching body lines (real line numbers), or one row per member of a type symbol.
+- **`--no-comments`** with `-o text`: drops blank and C-family comment-only lines, keeping real line numbers.
+
+### Changed
+
+- **SQLite 3.54.1** (was 3.48.0). Fixes a `-Wdiscarded-qualifiers` warning with const-preserving `strrchr` in newer glibc (Ubuntu 26.04 CI runners).
+- **macOS release binaries are back** (`toktoken-macos-x86_64`, `toktoken-macos-aarch64`): the release workflow uses `macos-latest` runners; the armv7 Linux build runs on `ubuntu-24.04`.
+
 ## [0.6.0] - 2026-11-23
 
 ### Added
@@ -334,6 +348,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Diagnostic mode (`-X`) with structured JSONL output.
 - Cross-platform support: Linux (x86_64, aarch64, armv7), macOS (x86_64, aarch64), Windows (x86_64).
 
+[0.7.0]: https://github.com/mauriziofonte/toktoken/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/mauriziofonte/toktoken/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/mauriziofonte/toktoken/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/mauriziofonte/toktoken/compare/v0.3.0...v0.4.0

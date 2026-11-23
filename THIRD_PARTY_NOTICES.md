@@ -4,7 +4,7 @@ This project includes the following third-party software:
 
 ## SQLite
 
-- **Version:** 3.48.0
+- **Version:** 3.54.1
 - **Source:** <https://www.sqlite.org/>
 - **License:** Public Domain (blessing)
 - **Files:** `vendor/sqlite3/`

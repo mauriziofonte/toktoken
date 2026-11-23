@@ -362,7 +362,7 @@ Binary names are determined at compile time via the `TT_ARCH` CMake definition:
 
 | Dependency | Type | Version | Used by |
 | ---------- | ---- | ------- | ------- |
-| SQLite | Vendored | 3.48.0 (with FTS5) | `database.c`, `index_store.c` |
+| SQLite | Vendored | 3.54.1 (with FTS5) | `database.c`, `index_store.c` |
 | cJSON | Vendored | 1.7.19 | `config.c`, `json_output.c`, `mcp_server.c` |
 | yyjson | Vendored | 0.12.0 | `index_pipeline.c` (ctags JSON parsing) |
 | xxHash | Vendored | 0.8.3 | `fast_hash.c` (content hashing, path hashing) |

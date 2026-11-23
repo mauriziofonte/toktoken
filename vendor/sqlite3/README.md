@@ -1,9 +1,9 @@
 # SQLite
 
-- **Version:** 3.48.0
-- **Source:** <https://www.sqlite.org/2025/sqlite-amalgamation-3480000.zip>
+- **Version:** 3.54.1
+- **Source:** <https://www.sqlite.org/2026/sqlite-amalgamation-3540100.zip>
 - **License:** Public Domain (see file LICENSE in this directory)
-- **Downloaded:** 2026-03-11
+- **Downloaded:** 2026-11-23
 
 ## Files
 

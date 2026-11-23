@@ -14,6 +14,16 @@
 /* ---- Core functions (return cJSON*, caller frees) ---- */
 
 cJSON *tt_cmd_search_symbols_exec(tt_cli_opts_t *opts);
+
+/*
+ * tt_cmd_search_defs_exec -- Exact-name definition lookup (--defs).
+ *
+ * Resolves several names in one call and returns the search:symbols shape
+ * plus "not_found" for names with no definition. Used by the CLI when
+ * --defs is set and by MCP search_symbols with defs=true.
+ */
+cJSON *tt_cmd_search_defs_exec(tt_cli_opts_t *opts, const char *const *names,
+                               int name_count);
 cJSON *tt_cmd_search_text_exec(tt_cli_opts_t *opts);
 cJSON *tt_cmd_search_cooccurrence_exec(tt_cli_opts_t *opts);
 cJSON *tt_cmd_search_similar_exec(tt_cli_opts_t *opts);

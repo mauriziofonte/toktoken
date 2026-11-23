@@ -17,6 +17,7 @@
 #include "hashmap.h"
 #include "fast_hash.h"
 #include "token_savings.h"
+#include "text_render.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1331,6 +1332,8 @@ cJSON *tt_cmd_inspect_tree_exec(tt_cli_opts_t *opts)
  * CLI wrappers
  * ================================================================ */
 
+/* ---- CLI wrappers ---- */
+
 int tt_cmd_inspect_outline(tt_cli_opts_t *opts)
 {
     cJSON *result = tt_cmd_inspect_outline_exec(opts);
@@ -1421,6 +1424,21 @@ int tt_cmd_inspect_symbol(tt_cli_opts_t *opts)
         return exit_code;
     }
 
+    /* Text format: source blocks with a "// file:line kind name" header */
+    if (tt_text_format_requested(opts))
+    {
+        char *text = tt_render_inspect_symbol_text(result, opts->no_comments, opts->grep,
+                                                   opts->members);
+        if (text)
+        {
+            fputs(text, stdout);
+            fflush(stdout);
+            free(text);
+            cJSON_Delete(result);
+            return exit_code;
+        }
+    }
+
     /* JSON output */
     if (cJSON_GetObjectItem(result, "error"))
     {
@@ -1449,6 +1467,19 @@ int tt_cmd_inspect_file(tt_cli_opts_t *opts)
         tt_json_print(result);
         cJSON_Delete(result);
         return 1;
+    }
+
+    if (tt_text_format_requested(opts))
+    {
+        char *text = tt_render_inspect_file_text(result, opts->no_comments);
+        if (text)
+        {
+            fputs(text, stdout);
+            fflush(stdout);
+            free(text);
+            cJSON_Delete(result);
+            return 0;
+        }
     }
 
     tt_json_print(result);

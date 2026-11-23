@@ -33,6 +33,17 @@ void tt_apply_limit(int limit, int *count);
 int tt_output_jsonl(cJSON *array);
 
 /*
+ * tt_line_is_comment_or_blank -- True for blank and C-family comment lines.
+ *
+ * Pass the same *in_block state for consecutive lines of one file so that
+ * block comment bodies (continuation lines and the closing marker) are
+ * recognised without mistaking a dereference such as "*p = 0;" for a
+ * comment. Used by --no-comments to drop comment-only lines from text
+ * output.
+ */
+bool tt_line_is_comment_or_blank(const char *line, bool *in_block);
+
+/*
  * tt_render_table -- Render an ASCII table to stdout.
  *
  * columns:    array of column header names (printed in UPPERCASE)

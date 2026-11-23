@@ -27,6 +27,7 @@ extern void run_config_tests(void);
 extern void run_path_validator_tests(void);
 extern void run_secret_patterns_tests(void);
 extern void run_output_fmt_tests(void);
+extern void run_text_render_tests(void);
 extern void run_json_output_tests(void);
 extern void run_edge_case_tests(void);
 extern void run_jinja_strip_tests(void);
@@ -96,6 +97,7 @@ int main(void)
 
     TT_SUITE("OutputFmt");
     run_output_fmt_tests();
+    run_text_render_tests();
 
     TT_SUITE("JsonOutput");
     run_json_output_tests();

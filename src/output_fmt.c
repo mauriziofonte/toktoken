@@ -10,6 +10,60 @@
 #include <string.h>
 #include <ctype.h>
 
+/* ---- Comment / blank line filter (--no-comments) ---- */
+
+/* Return the first non-space character index, or the end of the string. */
+static const char *skip_space(const char *s)
+{
+    while (*s && isspace((unsigned char)*s))
+        s++;
+    return s;
+}
+
+/* True when everything from s onward is whitespace. */
+static bool rest_is_blank(const char *s)
+{
+    return *skip_space(s) == '\0';
+}
+
+bool tt_line_is_comment_or_blank(const char *line, bool *in_block)
+{
+    if (!line)
+        return true;
+
+    const char *s = skip_space(line);
+
+    /* Inside a block comment: everything is comment until it is closed */
+    if (in_block && *in_block)
+    {
+        const char *close = strstr(s, "*/");
+        if (!close)
+            return true;
+        *in_block = false;
+        return rest_is_blank(close + 2);
+    }
+
+    if (*s == '\0')
+        return true; /* blank line */
+
+    if (s[0] == '/' && s[1] == '/')
+        return true; /* // line comment */
+
+    if (s[0] == '/' && s[1] == '*')
+    {
+        const char *close = strstr(s + 2, "*/");
+        if (!close)
+        {
+            if (in_block)
+                *in_block = true;
+            return true; /* comment starts and continues on the next line */
+        }
+        return rest_is_blank(close + 2); /* comment opens and closes here */
+    }
+
+    return false;
+}
+
 /* ---- Filter / Exclude ---- */
 
 /* Check if file_path contains any pipe-delimited pattern (case-insensitive).

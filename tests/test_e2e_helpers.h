@@ -10,6 +10,7 @@
 #define TT_TEST_E2E_HELPERS_H
 
 #include "platform.h"
+#include "str_util.h"
 #include <cJSON.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -151,6 +152,36 @@ static inline int tt_e2e_run(const char *cmd_args, cJSON **out_json)
         }
         fflush(stderr);
     }
+
+    int exit_code = r.exit_code;
+    tt_proc_result_free(&r);
+    return exit_code;
+}
+
+/*
+ * tt_e2e_run_raw -- Run toktoken binary and capture raw stdout.
+ *
+ * For output that is not JSON (--format text). *out_stdout receives a
+ * heap string the caller must free(); NULL when the binary produced nothing.
+ * Returns exit code, 127 if the binary was not found.
+ */
+static inline int tt_e2e_run_raw(const char *cmd_args, char **out_stdout)
+{
+    const char *bin = tt_e2e_binary();
+    if (!bin) {
+        fprintf(stderr, "[E2E] ERROR: toktoken binary not found\n");
+        if (out_stdout) *out_stdout = NULL;
+        return 127;
+    }
+
+    const char *argv[64];
+    char argstore[4096];
+    int argc = tt_e2e_tokenize(bin, cmd_args, argv, 64, argstore, sizeof(argstore));
+    (void)argc;
+
+    tt_proc_result_t r = tt_proc_run(argv, NULL, 0);
+    if (out_stdout)
+        *out_stdout = r.stdout_buf ? tt_strdup(r.stdout_buf) : NULL;
 
     int exit_code = r.exit_code;
     tt_proc_result_free(&r);

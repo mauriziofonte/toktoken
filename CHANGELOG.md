@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`search:text --regex`** uses POSIX extended regex in-process (grep -E semantics); ripgrep only where `regex.h` is missing. `--max` hard cap raised from 500 to 20000 (default 100).
 - **`help`** CLI names: `security_acl_gates` -> `security:acl-gates` (first underscore becomes `:`, later ones `-`).
 - Ctags `subroutine` kinds (Fortran) map to `subroutine` instead of `variable`.
+- **Release binaries**: Linux and Windows only. macOS binaries are no longer published (build from source on macOS).
 
 ### Fixed
 

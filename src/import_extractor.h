@@ -17,6 +17,8 @@ typedef struct {
     char *symbol_name;    /* [owns] imported symbol name, or NULL */
     int line;             /* 1-indexed line number */
     char *import_type;    /* [owns] "import", "require", "include", "use", etc. */
+    int dynamic;          /* 1 = runtime dispatch edge (e.g. Webmin foreign_require) */
+    double confidence;    /* edge confidence in (0,1]; 0 means "static, 1.0" */
 } tt_import_t;
 
 /*

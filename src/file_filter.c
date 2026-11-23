@@ -51,6 +51,8 @@ static const char *SKIP_DIRS[] = {
     "vendors", "app-assets",
     /* Well-known vendored editor/library directories (F20) */
     "codemirror", "ckeditor", "tinymce", "summernote",
+    /* Bundled CPAN modules (Perl distributions, Webmin) */
+    "vendor_perl",
     NULL};
 
 /* 67 source extensions */
@@ -71,7 +73,7 @@ static const char *SOURCE_EXTENSIONS[] = {
     "swift",                                       /* Swift */
     "dart",                                        /* Dart */
     "lua",                                         /* Lua */
-    "pl", "pm",                                    /* Perl */
+    "pl", "pm", "cgi", "psgi",                     /* Perl (CGI scripts) */
     "sh", "bash", "zsh",                           /* Shell scripts */
     "sql",                                         /* SQL */
     "r",                                           /* R language */
@@ -708,6 +710,71 @@ static const char *get_ext_lower(const char *basename, char *buf, size_t buf_siz
         buf[i] = (char)tolower((unsigned char)ext[i]);
 
     return buf;
+}
+
+/* ===== Data files with code-like extensions ===== */
+
+/* Extensions that collide with ISO language codes used as translation
+ * suffixes (Webmin: module.info.pl = Polish, config.info.sv = Swedish). */
+static bool is_ambiguous_code_ext(const char *ext)
+{
+    return ext && (strcmp(ext, "pl") == 0 || strcmp(ext, "sv") == 0 || strcmp(ext, "v") == 0);
+}
+
+/*
+ * looks_like_properties -- True when the head of the file is a key=value
+ * listing (>= 90% of non-blank, non-comment lines are "key=value" with a
+ * bare key). Such files are data, not Perl/SystemVerilog sources.
+ */
+static bool looks_like_properties(const char *full_path);
+
+bool tt_file_looks_like_properties(const char *full_path)
+{
+    return full_path && looks_like_properties(full_path);
+}
+
+static bool looks_like_properties(const char *full_path)
+{
+    FILE *f = fopen(full_path, "rb");
+    if (!f)
+        return false;
+    char buf[4096];
+    size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    buf[n] = '\0';
+    if (n == 0)
+        return false;
+    if (n >= 2 && buf[0] == '#' && buf[1] == '!')
+        return false; /* shebang: a script */
+
+    int lines = 0, kv = 0;
+    const char *p = buf;
+    const char *end = buf + n;
+    while (p < end)
+    {
+        const char *le = memchr(p, '\n', (size_t)(end - p));
+        if (!le)
+        {
+            if (n == sizeof(buf) - 1)
+                break; /* truncated last line: ignore */
+            le = end;
+        }
+        const char *q = p;
+        while (q < le && (*q == ' ' || *q == '\t' || *q == '\r'))
+            q++;
+        if (q < le && *q != '#')
+        {
+            lines++;
+            const char *k = q;
+            while (k < le && (isalnum((unsigned char)*k) || *k == '_' || *k == '.' || *k == '-' ||
+                              *k == '/'))
+                k++;
+            if (k > q && k < le && *k == '=' && (k + 1 >= le || k[1] != '='))
+                kv++;
+        }
+        p = le + 1;
+    }
+    return lines > 0 && kv * 10 >= lines * 9;
 }
 
 /* ===== Workspace detection (monorepo awareness) ===== */
@@ -1400,6 +1467,12 @@ static int discover_paths_walk_cb(const char *dir, const char *name,
         if (ext && tt_hashmap_has(ff->binary_ext, ext))
         {
             ctx->diag_files_rejected_binary++;
+            goto skip;
+        }
+        /* B4b: key=value data files behind a code extension (smart filter) */
+        if (ff->smart_filter && is_ambiguous_code_ext(ext) && looks_like_properties(full))
+        {
+            ctx->diag_files_rejected_other++;
             goto skip;
         }
     }

@@ -477,6 +477,90 @@ TT_TEST(test_codebase_detect_heuristic)
     manage_cleanup();
 }
 
+TT_TEST(test_codebase_detect_census_perl)
+{
+    manage_setup();
+
+    tt_test_write_file(s_tmpdir, "Makefile.PL", "use ExtUtils::MakeMaker;\n");
+    tt_test_write_file(s_tmpdir, "lib/A.pm", "package A;\nsub a { 1 }\n1;\n");
+    tt_test_write_file(s_tmpdir, "lib/B.pm", "package B;\nsub b { 1 }\n1;\n");
+    tt_test_write_file(s_tmpdir, "bin/run.pl", "print 1;\n");
+    tt_test_write_file(s_tmpdir, "cgi/index.cgi", "#!/usr/bin/perl\nprint 1;\n");
+    tt_test_write_file(s_tmpdir, "cgi/empty.pl", "");
+    /* Test directories are not part of the census */
+    for (int i = 0; i < 6; i++)
+    {
+        char name[32];
+        snprintf(name, sizeof(name), "t/fixtures/f%d.py", i);
+        tt_test_write_file(s_tmpdir, name, "x = 1\n");
+    }
+    /* Translation data behind language-code extensions */
+    tt_test_write_file(s_tmpdir, "mod/module.info.cs", "desc_cs=Modul\n");
+    tt_test_write_file(s_tmpdir, "mod/config.info.el", "line1=Ena\n");
+
+    tt_cli_opts_t opts;
+    memset(&opts, 0, sizeof(opts));
+    opts.path = s_tmpdir;
+    opts.truncate_width = 120;
+
+    int exit_code = 0;
+    cJSON *result = tt_cmd_codebase_detect_exec(&opts, &exit_code);
+    TT_ASSERT_NOT_NULL(result);
+    TT_ASSERT_EQ_INT(exit_code, 0);
+    TT_ASSERT_EQ_STR("manifest-root", cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(result, "detection")));
+    TT_ASSERT_EQ_STR("perl", cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(result, "primary")));
+    TT_ASSERT_EQ_INT(0, cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(result, "secondary")));
+
+    cJSON *langs = cJSON_GetObjectItemCaseSensitive(result, "languages");
+    TT_ASSERT_EQ_INT(1, cJSON_GetArraySize(langs));
+    cJSON *perl = cJSON_GetArrayItem(langs, 0);
+    TT_ASSERT_EQ_INT(5, cJSON_GetObjectItemCaseSensitive(perl, "files")->valueint); /* Makefile.PL is Perl */
+
+    cJSON *eco = cJSON_GetObjectItemCaseSensitive(result, "ecosystems");
+    TT_ASSERT_EQ_INT(1, cJSON_GetArraySize(eco));
+    TT_ASSERT_EQ_STR("perl", cJSON_GetStringValue(cJSON_GetArrayItem(eco, 0)));
+
+    cJSON *man = cJSON_GetArrayItem(cJSON_GetObjectItemCaseSensitive(result, "manifests"), 0);
+    TT_ASSERT_EQ_STR("Makefile.PL", cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(man, "file")));
+    TT_ASSERT_EQ_STR("perl", cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(man, "ecosystem")));
+
+    cJSON_Delete(result);
+    manage_cleanup();
+}
+
+TT_TEST(test_codebase_detect_ecosystem_order)
+{
+    manage_setup();
+
+    /* Manifests for node and python; the census decides the order */
+    tt_test_write_file(s_tmpdir, "package.json", "{}");
+    tt_test_write_file(s_tmpdir, "requirements.txt", "requests\n");
+    for (int i = 0; i < 6; i++)
+    {
+        char name[32];
+        snprintf(name, sizeof(name), "src/m%d.py", i);
+        tt_test_write_file(s_tmpdir, name, "x = 1\n");
+    }
+    tt_test_write_file(s_tmpdir, "web/app.js", "var a = 1;\n");
+
+    tt_cli_opts_t opts;
+    memset(&opts, 0, sizeof(opts));
+    opts.path = s_tmpdir;
+    opts.truncate_width = 120;
+
+    int exit_code = 0;
+    cJSON *result = tt_cmd_codebase_detect_exec(&opts, &exit_code);
+    TT_ASSERT_NOT_NULL(result);
+    cJSON *eco = cJSON_GetObjectItemCaseSensitive(result, "ecosystems");
+    TT_ASSERT_EQ_INT(2, cJSON_GetArraySize(eco));
+    TT_ASSERT_EQ_STR("python", cJSON_GetStringValue(cJSON_GetArrayItem(eco, 0)));
+    TT_ASSERT_EQ_STR("node", cJSON_GetStringValue(cJSON_GetArrayItem(eco, 1)));
+    TT_ASSERT_EQ_INT(2, cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(result, "manifests")));
+
+    cJSON_Delete(result);
+    manage_cleanup();
+}
+
 /* ---- projects:list tests ---- */
 
 TT_TEST(test_projects_list_empty)
@@ -554,6 +638,8 @@ void run_int_manage_tests(void)
     TT_RUN(test_codebase_detect_invalid_path);
     TT_RUN(test_codebase_detect_manifest_subdir);
     TT_RUN(test_codebase_detect_heuristic);
+    TT_RUN(test_codebase_detect_census_perl);
+    TT_RUN(test_codebase_detect_ecosystem_order);
 
     TT_SUITE("Projects List Tests");
     TT_RUN(test_projects_list_empty);

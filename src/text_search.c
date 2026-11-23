@@ -8,14 +8,19 @@
 #include "platform.h"
 #include "str_util.h"
 #include "error.h"
+#include "hashmap.h"
 
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <ctype.h>
+#include <stdint.h>
 
 #ifdef TT_PLATFORM_UNIX
 #include <unistd.h>
+#endif
+#ifdef TT_HAVE_POSIX_REGEX
+#include <regex.h>
 #endif
 #ifdef TT_PLATFORM_WINDOWS
 #include <process.h>
@@ -27,6 +32,7 @@ static const tt_text_search_opts_t DEFAULT_OPTS = {
     .max_results = 100,
     .context_lines = 0};
 
+#ifndef TT_HAVE_POSIX_REGEX
 /* Cached ripgrep path (NULL = not checked, "" = not available). */
 static char *rg_path_cache = NULL;
 static bool rg_path_checked = false;
@@ -41,6 +47,8 @@ static const char *find_ripgrep(void)
     }
     return rg_path_cache;
 }
+
+#endif
 
 /* Free a single result's strings. */
 static void result_free_fields(tt_text_result_t *r)
@@ -211,6 +219,7 @@ const char *tt_regex_validate(const char *pattern)
     return NULL;
 }
 
+#ifndef TT_HAVE_POSIX_REGEX
 /* Escape a string for regex (like PHP preg_quote). [caller-frees] */
 static char *regex_escape(const char *s)
 {
@@ -248,23 +257,70 @@ static char *regex_escape(const char *s)
 
 /* ---- Ripgrep search ---- */
 
+#endif
+
+#ifndef TT_HAVE_POSIX_REGEX
+typedef struct
+{
+    int file_index;
+    tt_text_result_t r;
+} rg_hit_t;
+
+static int cmp_rg_hit(const void *a, const void *b)
+{
+    const rg_hit_t *x = (const rg_hit_t *)a;
+    const rg_hit_t *y = (const rg_hit_t *)b;
+    if (x->file_index != y->file_index)
+        return x->file_index < y->file_index ? -1 : 1;
+    return (x->r.line > y->r.line) - (x->r.line < y->r.line);
+}
+
+/* Read a JSON string value starting right after the opening quote. */
+static char *rg_json_string(const char *lt, const char *eol)
+{
+    tt_strbuf_t txt;
+    tt_strbuf_init(&txt);
+    while (*lt && *lt != '"' && lt < eol)
+    {
+        if (*lt == '\\' && *(lt + 1))
+        {
+            lt++;
+            switch (*lt)
+            {
+            case 'n': tt_strbuf_append_char(&txt, '\n'); break;
+            case 't': tt_strbuf_append_char(&txt, '\t'); break;
+            case 'r': tt_strbuf_append_char(&txt, '\r'); break;
+            default: tt_strbuf_append_char(&txt, *lt); break;
+            }
+        }
+        else
+        {
+            tt_strbuf_append_char(&txt, *lt);
+        }
+        lt++;
+    }
+    return tt_strbuf_detach(&txt);
+}
+
+/*
+ * search_ripgrep -- Regex search through ripgrep, used only where the
+ * POSIX regex API is unavailable. Paths are passed as positional
+ * arguments in chunks (command-line length limits); results are sorted
+ * by input order and line for deterministic output. No context lines.
+ */
 static int search_ripgrep(const char *project_root, const char **file_paths, int file_count,
                           const char **queries, int query_count,
                           const tt_text_search_opts_t *opts,
                           tt_text_results_t *out, int *cap)
 {
-    /* Build regex pattern: escaped queries joined with | */
     tt_strbuf_t pattern;
     tt_strbuf_init(&pattern);
-
     for (int i = 0; i < query_count; i++)
     {
         if (i > 0)
             tt_strbuf_append_char(&pattern, '|');
         if (opts->is_regex)
-        {
             tt_strbuf_append_str(&pattern, queries[i]);
-        }
         else
         {
             char *escaped = regex_escape(queries[i]);
@@ -276,187 +332,165 @@ static int search_ripgrep(const char *project_root, const char **file_paths, int
         }
     }
 
-    /* Write file list to temp file */
-    char list_path[256];
-#ifdef TT_PLATFORM_WINDOWS
-    snprintf(list_path, sizeof(list_path), "tt_rg_%d.txt", (int)_getpid());
-#else
-    snprintf(list_path, sizeof(list_path), "/tmp/tt_rg_%d.txt", (int)getpid());
-#endif
-
-    tt_strbuf_t list_content;
-    tt_strbuf_init(&list_content);
-    for (int i = 0; i < file_count; i++)
-    {
-        tt_strbuf_append_str(&list_content, file_paths[i]);
-        tt_strbuf_append_char(&list_content, '\n');
-    }
-    tt_write_file(list_path, list_content.data, list_content.len);
-    tt_strbuf_free(&list_content);
-
-    /* Build rg command */
     char max_count_str[32];
     snprintf(max_count_str, sizeof(max_count_str), "%d", opts->max_results);
 
-    const char *argv[16];
-    int argc = 0;
-    argv[argc++] = find_ripgrep();
-    argv[argc++] = "--json";
-    argv[argc++] = "--max-count";
-    argv[argc++] = max_count_str;
-
-    if (!opts->case_sensitive)
+    tt_hashmap_t *index_of = tt_hashmap_new((size_t)file_count * 2 + 16);
+    char **full_paths = calloc((size_t)file_count, sizeof(char *));
+    if (!index_of || !full_paths)
     {
-        argv[argc++] = "--ignore-case";
-    }
-
-    argv[argc++] = pattern.data;
-    argv[argc++] = "--files-from";
-    argv[argc++] = list_path;
-    argv[argc] = NULL;
-
-    /* Run rg with 30s timeout */
-    tt_proc_result_t result = tt_proc_run(argv, NULL, 30000);
-
-    tt_remove_file(list_path);
-
-    /* rg exit codes: 0 = matches found, 1 = no matches, 2+ = error.
-     * exit_code < 0 = process launch failure.
-     * Any error → return -1 to trigger manual fallback in caller. */
-    if (result.exit_code < 0 || result.exit_code >= 2 || !result.stdout_buf)
-    {
-        tt_proc_result_free(&result);
+        if (index_of)
+            tt_hashmap_free(index_of);
+        free(full_paths);
         tt_strbuf_free(&pattern);
         return -1;
     }
-
-    /* Parse ripgrep JSON output */
-    const char *line = result.stdout_buf;
-    while (*line && out->count < opts->max_results)
+    for (int i = 0; i < file_count; i++)
     {
-        const char *eol = strchr(line, '\n');
-        if (!eol)
-            eol = line + strlen(line);
+        full_paths[i] = tt_path_join(project_root, file_paths[i]);
+        if (full_paths[i])
+            tt_hashmap_set(index_of, full_paths[i], (void *)(intptr_t)(i + 1));
+    }
 
-        size_t line_len = (size_t)(eol - line);
-        if (line_len > 0)
+    rg_hit_t *hits = NULL;
+    int nhits = 0, caphits = 0;
+    int rc = 0;
+    const int CHUNK = 200;
+    size_t root_len = strlen(project_root);
+
+    for (int start = 0; start < file_count && rc == 0; start += CHUNK)
+    {
+        int end = start + CHUNK < file_count ? start + CHUNK : file_count;
+        const char **argv = calloc((size_t)(end - start) + 12, sizeof(char *));
+        if (!argv)
         {
-            /* Quick check for "match" type */
+            rc = -1;
+            break;
+        }
+        int argc = 0;
+        argv[argc++] = find_ripgrep();
+        argv[argc++] = "--json";
+        argv[argc++] = "--no-config";
+        argv[argc++] = "--no-messages";
+        argv[argc++] = "--max-count";
+        argv[argc++] = max_count_str;
+        if (!opts->case_sensitive)
+            argv[argc++] = "--ignore-case";
+        argv[argc++] = "-e";
+        argv[argc++] = pattern.data;
+        argv[argc++] = "--";
+        for (int i = start; i < end; i++)
+        {
+            if (full_paths[i])
+                argv[argc++] = full_paths[i];
+        }
+        argv[argc] = NULL;
+
+        tt_proc_result_t result = tt_proc_run(argv, NULL, 30000);
+        free(argv);
+        if (result.exit_code < 0 || result.exit_code >= 2 || !result.stdout_buf)
+        {
+            tt_proc_result_free(&result);
+            rc = -1;
+            break;
+        }
+
+        const char *line = result.stdout_buf;
+        while (*line)
+        {
+            const char *eol = strchr(line, '\n');
+            if (!eol)
+                eol = line + strlen(line);
             const char *type_pos = strstr(line, "\"type\":\"match\"");
             if (type_pos && type_pos < eol)
             {
-                /* We need the path.text specifically. In ripgrep JSON:
-                 * {"type":"match","data":{"path":{"text":"..."},"lines":{"text":"..."},"line_number":N,...}}
-                 * Find "path" then "text" */
-                const char *path_key = strstr(line, "\"path\":");
                 char *file = NULL;
+                char *text = NULL;
                 int line_num = 0;
-                char *match_text = NULL;
-
+                const char *path_key = strstr(line, "\"path\":");
                 if (path_key && path_key < eol)
                 {
                     const char *pt = strstr(path_key, "\"text\":\"");
                     if (pt && pt < eol)
-                    {
-                        pt += 8;
-                        const char *ptend = strchr(pt, '"');
-                        if (ptend && ptend < eol)
-                        {
-                            file = tt_strndup(pt, (size_t)(ptend - pt));
-                        }
-                    }
+                        file = rg_json_string(pt + 8, eol);
                 }
-
-                /* Extract line_number */
                 const char *ln_key = strstr(line, "\"line_number\":");
                 if (ln_key && ln_key < eol)
-                {
-                    ln_key += 14;
-                    line_num = atoi(ln_key);
-                }
-
-                /* Extract lines.text */
+                    line_num = atoi(ln_key + 14);
                 const char *lines_key = strstr(line, "\"lines\":");
                 if (lines_key && lines_key < eol)
                 {
                     const char *lt = strstr(lines_key, "\"text\":\"");
                     if (lt && lt < eol)
-                    {
-                        lt += 8;
-                        /* Read JSON string value (handle escapes) */
-                        tt_strbuf_t txt;
-                        tt_strbuf_init(&txt);
-                        while (*lt && *lt != '"' && lt < eol)
-                        {
-                            if (*lt == '\\' && *(lt + 1))
-                            {
-                                lt++;
-                                switch (*lt)
-                                {
-                                case 'n':
-                                    tt_strbuf_append_char(&txt, '\n');
-                                    break;
-                                case 't':
-                                    tt_strbuf_append_char(&txt, '\t');
-                                    break;
-                                case 'r':
-                                    tt_strbuf_append_char(&txt, '\r');
-                                    break;
-                                case '\\':
-                                    tt_strbuf_append_char(&txt, '\\');
-                                    break;
-                                case '"':
-                                    tt_strbuf_append_char(&txt, '"');
-                                    break;
-                                case '/':
-                                    tt_strbuf_append_char(&txt, '/');
-                                    break;
-                                default:
-                                    tt_strbuf_append_char(&txt, *lt);
-                                    break;
-                                }
-                            }
-                            else
-                            {
-                                tt_strbuf_append_char(&txt, *lt);
-                            }
-                            lt++;
-                        }
-                        match_text = tt_strbuf_detach(&txt);
-                    }
+                        text = rg_json_string(lt + 8, eol);
                 }
-
-                if (file && line_num > 0 && match_text)
+                intptr_t idx = file ? (intptr_t)tt_hashmap_get(index_of, file) : 0;
+                if (idx > 0 && line_num > 0 && text)
                 {
-                    if (grow_results(out, cap) == 0)
+                    if (nhits >= caphits)
                     {
-                        tt_text_result_t *r = &out->results[out->count];
-                        r->file = file;
-                        r->line = line_num;
-                        r->text = truncate_text(match_text);
-                        r->before = NULL;
-                        r->before_count = 0;
-                        r->after = NULL;
-                        r->after_count = 0;
-                        out->count++;
-                        file = NULL;
+                        caphits = caphits ? caphits * 2 : 64;
+                        rg_hit_t *tmp = realloc(hits, (size_t)caphits * sizeof(rg_hit_t));
+                        if (!tmp)
+                        {
+                            free(file);
+                            free(text);
+                            break;
+                        }
+                        hits = tmp;
                     }
+                    rg_hit_t *h = &hits[nhits++];
+                    memset(h, 0, sizeof(*h));
+                    h->file_index = (int)idx - 1;
+                    h->r.file = tt_strdup(file_paths[idx - 1]);
+                    h->r.line = line_num;
+                    h->r.text = truncate_text(text);
                 }
-
                 free(file);
-                free(match_text);
+                free(text);
+            }
+            if (!*eol)
+                break;
+            line = eol + 1;
+        }
+        tt_proc_result_free(&result);
+    }
+    (void)root_len;
+
+    if (rc == 0 && nhits > 0)
+    {
+        qsort(hits, (size_t)nhits, sizeof(rg_hit_t), cmp_rg_hit);
+        for (int i = 0; i < nhits; i++)
+        {
+            if (out->count < opts->max_results && grow_results(out, cap) == 0)
+            {
+                out->results[out->count++] = hits[i].r;
+            }
+            else
+            {
+                free(hits[i].r.file);
+                free(hits[i].r.text);
             }
         }
-
-        if (!*eol)
-            break;
-        line = eol + 1;
     }
-
-    tt_proc_result_free(&result);
+    else if (hits)
+    {
+        for (int i = 0; i < nhits; i++)
+        {
+            free(hits[i].r.file);
+            free(hits[i].r.text);
+        }
+    }
+    free(hits);
+    for (int i = 0; i < file_count; i++)
+        free(full_paths[i]);
+    free(full_paths);
+    tt_hashmap_free(index_of);
     tt_strbuf_free(&pattern);
-    return 0;
+    return rc;
 }
+
+#endif /* !TT_HAVE_POSIX_REGEX */
 
 /* ---- Manual (PHP-style) fallback search ---- */
 
@@ -481,6 +515,156 @@ static bool line_matches(const char *line_text,
     }
     return false;
 }
+
+/* Append the match on line index li (0-based) with optional context. */
+static int emit_line_result(tt_text_results_t *out, int *cap, const char *file,
+                            char **lines, int total_lines, int li, int ctx)
+{
+    if (grow_results(out, cap) < 0)
+        return -1;
+    tt_text_result_t *r = &out->results[out->count];
+    r->file = tt_strdup(file);
+    r->line = li + 1;
+    r->text = truncate_text(lines[li]);
+    r->before = NULL;
+    r->before_count = 0;
+    r->after = NULL;
+    r->after_count = 0;
+    if (ctx > 0)
+    {
+        int before_start = li - ctx < 0 ? 0 : li - ctx;
+        int before_cnt = li - before_start;
+        if (before_cnt > 0)
+        {
+            r->before = malloc(sizeof(char *) * (size_t)before_cnt);
+            if (r->before)
+            {
+                r->before_count = before_cnt;
+                for (int b = 0; b < before_cnt; b++)
+                    r->before[b] = tt_strdup(lines[before_start + b]);
+            }
+        }
+        int after_end = li + 1 + ctx > total_lines ? total_lines : li + 1 + ctx;
+        int after_cnt = after_end - (li + 1);
+        if (after_cnt > 0)
+        {
+            r->after = malloc(sizeof(char *) * (size_t)after_cnt);
+            if (r->after)
+            {
+                r->after_count = after_cnt;
+                for (int a = 0; a < after_cnt; a++)
+                    r->after[a] = tt_strdup(lines[li + 1 + a]);
+            }
+        }
+    }
+    out->count++;
+    return 0;
+}
+
+#ifdef TT_HAVE_POSIX_REGEX
+/*
+ * search_regex_posix -- POSIX ERE search (grep -E semantics: REG_NEWLINE
+ * makes ^ $ . line-oriented). Each file buffer is scanned with regexec;
+ * only files with a match are split into lines. Deterministic: input file
+ * order, then line order.
+ */
+static int search_regex_posix(const char *project_root, const char **file_paths, int file_count,
+                              const char **queries, int query_count,
+                              const tt_text_search_opts_t *opts,
+                              tt_text_results_t *out, int *cap)
+{
+    tt_strbuf_t pattern;
+    tt_strbuf_init(&pattern);
+    for (int i = 0; i < query_count; i++)
+    {
+        if (i > 0)
+            tt_strbuf_append_char(&pattern, '|');
+        if (query_count > 1)
+            tt_strbuf_append_char(&pattern, '(');
+        tt_strbuf_append_str(&pattern, queries[i]);
+        if (query_count > 1)
+            tt_strbuf_append_char(&pattern, ')');
+    }
+    regex_t re;
+    int cflags = REG_EXTENDED | REG_NEWLINE | (opts->case_sensitive ? 0 : REG_ICASE);
+    int crc = regcomp(&re, pattern.data ? pattern.data : "", cflags);
+    tt_strbuf_free(&pattern);
+    if (crc != 0)
+    {
+        char msg[160];
+        regerror(crc, &re, msg, sizeof(msg));
+        tt_error_set("Invalid regex: %s", msg);
+        return -2;
+    }
+
+    int *hit_lines = NULL;
+    int hit_cap = 0;
+    for (int fi = 0; fi < file_count && out->count < opts->max_results; fi++)
+    {
+        char *full_path = tt_path_join(project_root, file_paths[fi]);
+        if (!full_path)
+            continue;
+        size_t len = 0;
+        char *content = tt_read_file(full_path, &len);
+        free(full_path);
+        if (!content)
+            continue;
+
+        int nh = 0;
+        size_t off = 0;
+        int line_no = 1;
+        size_t counted = 0;
+        while (off <= len && out->count + nh < opts->max_results)
+        {
+            regmatch_t m;
+            int ef = (off > 0 && content[off - 1] != '\n') ? REG_NOTBOL : 0;
+            if (regexec(&re, content + off, 1, &m, ef) != 0)
+                break;
+            size_t ms = off + (size_t)m.rm_so;
+            for (; counted < ms; counted++)
+            {
+                if (content[counted] == '\n')
+                    line_no++;
+            }
+            if (nh >= hit_cap)
+            {
+                hit_cap = hit_cap ? hit_cap * 2 : 64;
+                int *tmp = realloc(hit_lines, (size_t)hit_cap * sizeof(int));
+                if (!tmp)
+                    break;
+                hit_lines = tmp;
+            }
+            hit_lines[nh++] = line_no;
+            /* Next line: one result per line, like grep. */
+            const char *nl = memchr(content + ms, '\n', len - ms);
+            if (!nl)
+                break;
+            off = (size_t)(nl - content) + 1;
+        }
+
+        if (nh > 0)
+        {
+            int total_lines = 0;
+            char **lines = tt_str_split(content, '\n', &total_lines);
+            if (lines)
+            {
+                for (int k = 0; k < nh && out->count < opts->max_results; k++)
+                {
+                    int li = hit_lines[k] - 1;
+                    if (li >= 0 && li < total_lines)
+                        emit_line_result(out, cap, file_paths[fi], lines, total_lines, li,
+                                         opts->context_lines);
+                }
+                tt_str_split_free(lines);
+            }
+        }
+        free(content);
+    }
+    free(hit_lines);
+    regfree(&re);
+    return 0;
+}
+#endif
 
 static int search_manual(const char *project_root, const char **file_paths, int file_count,
                          const char **queries, int query_count,
@@ -529,61 +713,9 @@ static int search_manual(const char *project_root, const char **file_paths, int 
                               (const char **)queries_lower, opts->case_sensitive))
                 continue;
 
-            if (grow_results(out, cap) < 0)
+            if (emit_line_result(out, cap, file_paths[fi], lines, total_lines, li,
+                                 opts->context_lines) < 0)
                 break;
-
-            tt_text_result_t *r = &out->results[out->count];
-            r->file = tt_strdup(file_paths[fi]);
-            r->line = li + 1;
-            r->text = truncate_text(line_text);
-            r->before = NULL;
-            r->before_count = 0;
-            r->after = NULL;
-            r->after_count = 0;
-
-            /* Context lines */
-            if (opts->context_lines > 0)
-            {
-                int ctx = opts->context_lines;
-
-                /* Before context */
-                int before_start = li - ctx;
-                if (before_start < 0)
-                    before_start = 0;
-                int before_cnt = li - before_start;
-                if (before_cnt > 0)
-                {
-                    r->before = malloc(sizeof(char *) * (size_t)before_cnt);
-                    if (r->before)
-                    {
-                        r->before_count = before_cnt;
-                        for (int b = 0; b < before_cnt; b++)
-                        {
-                            r->before[b] = tt_strdup(lines[before_start + b]);
-                        }
-                    }
-                }
-
-                /* After context */
-                int after_end = li + 1 + ctx;
-                if (after_end > total_lines)
-                    after_end = total_lines;
-                int after_cnt = after_end - (li + 1);
-                if (after_cnt > 0)
-                {
-                    r->after = malloc(sizeof(char *) * (size_t)after_cnt);
-                    if (r->after)
-                    {
-                        r->after_count = after_cnt;
-                        for (int a = 0; a < after_cnt; a++)
-                        {
-                            r->after[a] = tt_strdup(lines[li + 1 + a]);
-                        }
-                    }
-                }
-            }
-
-            out->count++;
         }
 
         tt_str_split_free(lines);
@@ -639,30 +771,32 @@ int tt_text_search(const char *project_root, const char **file_paths, int file_c
     if (!out->results)
         return -1;
 
-    const char *rg = find_ripgrep();
     int rc;
 
-    if (rg)
+    if (!opts->is_regex)
     {
-        rc = search_ripgrep(project_root, file_paths, file_count,
-                            queries, query_count, opts, out, &cap);
-        if (rc < 0)
-        {
-            /* Ripgrep failed, fallback to manual */
-            for (int i = 0; i < out->count; i++)
-                result_free_fields(&out->results[i]);
-            out->count = 0;
-            rc = search_manual(project_root, file_paths, file_count,
-                               queries, query_count, opts, out, &cap);
-        }
-    }
-    else
-    {
-        rc = search_manual(project_root, file_paths, file_count,
-                           queries, query_count, opts, out, &cap);
+        /* Literal: in-process, deterministic (input file order). */
+        return search_manual(project_root, file_paths, file_count,
+                             queries, query_count, opts, out, &cap);
     }
 
+#ifdef TT_HAVE_POSIX_REGEX
+    rc = search_regex_posix(project_root, file_paths, file_count,
+                            queries, query_count, opts, out, &cap);
+    return rc == -2 ? -1 : rc;
+#else
+    /* No POSIX regex API (e.g. MinGW): ripgrep is required for regex. */
+    if (!find_ripgrep())
+    {
+        tt_error_set("Regex search needs ripgrep (rg) on this platform");
+        return -1;
+    }
+    rc = search_ripgrep(project_root, file_paths, file_count,
+                        queries, query_count, opts, out, &cap);
+    if (rc < 0)
+        tt_error_set("ripgrep failed to run the regex search");
     return rc;
+#endif
 }
 
 void tt_text_results_free(tt_text_results_t *r)

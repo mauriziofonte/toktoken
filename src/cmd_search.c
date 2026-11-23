@@ -20,6 +20,7 @@
 #include "token_savings.h"
 #include "symbol_scorer.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -54,7 +55,8 @@ static const char **parse_kinds(const char *kind_str, int *out_count,
     if (!parts || part_count == 0)
         return NULL;
 
-    const char **kinds = calloc((size_t)(part_count + 1), sizeof(char *));
+    /* +2: NULL terminator and the implied "subroutine" for "function" */
+    const char **kinds = calloc((size_t)(part_count + 2), sizeof(char *));
     if (!kinds)
     {
         tt_str_split_free(parts);
@@ -62,6 +64,7 @@ static const char **parse_kinds(const char *kind_str, int *out_count,
     }
 
     int n = 0;
+    bool has_function = false, has_subroutine = false;
     for (int i = 0; i < part_count; i++)
     {
         char *trimmed = tt_str_trim(parts[i]);
@@ -74,8 +77,19 @@ static const char **parse_kinds(const char *kind_str, int *out_count,
             tt_str_split_free(parts);
             return NULL;
         }
-        kinds[n++] = tt_normalize_kind(trimmed);
+        kinds[n] = tt_normalize_kind(trimmed);
+        if (tt_kind_filter_matches(kinds[n], "subroutine"))
+        {
+            if (strcmp(kinds[n], "subroutine") == 0)
+                has_subroutine = true;
+            else
+                has_function = true;
+        }
+        n++;
     }
+    /* Filter semantics (tt_kind_filter_matches): function includes subroutine */
+    if (has_function && !has_subroutine)
+        kinds[n++] = "subroutine";
     kinds[n] = NULL;
     *out_count = n;
 
@@ -240,6 +254,164 @@ static int free_cache_entry(const char *key, void *value, void *userdata)
 
 /* ---- search:symbols ---- */
 
+/* ---- Definitions vs references (exact identifier queries) ---- */
+
+typedef struct
+{
+    bool enabled;        /* query is a plain identifier */
+    bool has_sites;      /* index holds call-site data (Perl) */
+    int definitions;     /* symbols named exactly like the query, definition kinds */
+    int references;      /* distinct file:line call/sink/sanitizer/ACL sites naming the query */
+    int reference_files; /* distinct files holding those sites */
+} defref_t;
+
+static bool is_identifier_query(const char *q)
+{
+    if (!q || !q[0])
+        return false;
+    for (const char *p = q; *p; p++)
+    {
+        if (!isalnum((unsigned char)*p) && *p != '_')
+            return false;
+    }
+    return true;
+}
+
+/* Kinds that declare something (imports and document headings do not). */
+static bool is_definition_kind(tt_symbol_kind_e kind)
+{
+    return kind != TT_KIND_DIRECTIVE && kind != TT_KIND_CHAPTER && kind != TT_KIND_SECTION &&
+           kind != TT_KIND_SUBSECTION;
+}
+
+static bool name_matches(const char *name, const char *query, bool case_sensitive)
+{
+    if (!name)
+        return false;
+    return case_sensitive ? strcmp(name, query) == 0 : tt_strcasecmp(name, query) == 0;
+}
+
+static bool kind_in_list(const char *kind, const char **kinds, int kind_count)
+{
+    if (kind_count == 0)
+        return true;
+    for (int i = 0; i < kind_count; i++)
+    {
+        if (strcmp(kinds[i], kind) == 0)
+            return true;
+    }
+    return false;
+}
+
+static bool file_passes(const char *file, const tt_cli_opts_t *opts, tt_hashmap_t *scope_map)
+{
+    if (!file)
+        return false;
+    if (opts->file_glob && opts->file_glob[0] && !tt_fnmatch(opts->file_glob, file, true))
+        return false;
+    if (!tt_matches_path_filters(file, opts->filter, opts->exclude))
+        return false;
+    if (scope_map && !tt_hashmap_has(scope_map, file))
+        return false;
+    return true;
+}
+
+/*
+ * count_defs_refs -- Split an identifier query into definitions (symbols
+ * whose name equals the query) and references (recorded call sites naming
+ * it). Same kind/language/path/scope filters as the symbol search.
+ */
+static void count_defs_refs(sqlite3 *db, const char *query, const tt_cli_opts_t *opts,
+                            tt_hashmap_t *scope_map, defref_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    if (opts->regex || !is_identifier_query(query))
+        return;
+    out->enabled = true;
+
+    int kind_count = 0;
+    const char **kinds = parse_kinds(opts->kind, &kind_count, NULL);
+    const char *collate = opts->case_sensitive ? "" : " COLLATE NOCASE";
+
+    char sql[256];
+    sqlite3_stmt *stmt = NULL;
+    snprintf(sql, sizeof(sql), "SELECT file, kind, language, name FROM symbols WHERE name = ?%s",
+             collate);
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) == SQLITE_OK)
+    {
+        sqlite3_bind_text(stmt, 1, query, -1, SQLITE_TRANSIENT);
+        while (sqlite3_step(stmt) == SQLITE_ROW)
+        {
+            const char *file = (const char *)sqlite3_column_text(stmt, 0);
+            const char *kind = (const char *)sqlite3_column_text(stmt, 1);
+            const char *lang = (const char *)sqlite3_column_text(stmt, 2);
+            if (!kind || !is_definition_kind(tt_kind_from_ctags(kind)))
+                continue;
+            if (!kind_in_list(kind, kinds, kind_count))
+                continue;
+            if (opts->language && opts->language[0] && (!lang || strcmp(lang, opts->language) != 0))
+                continue;
+            if (!file_passes(file, opts, scope_map))
+                continue;
+            out->definitions++;
+        }
+        sqlite3_finalize(stmt);
+    }
+    free((void *)kinds);
+
+    stmt = NULL;
+    if (sqlite3_prepare_v2(db, "SELECT EXISTS(SELECT 1 FROM sites)", -1, &stmt, NULL) == SQLITE_OK)
+    {
+        if (sqlite3_step(stmt) == SQLITE_ROW)
+            out->has_sites = sqlite3_column_int(stmt, 0) != 0;
+        sqlite3_finalize(stmt);
+    }
+    if (!out->has_sites)
+        return;
+
+    /* Sites carry no language column: the language filter keeps only languages
+     * whose parser records sites (Perl). Rows come ordered by file. */
+    if (opts->language && opts->language[0] && strcmp(opts->language, "perl") != 0)
+        return;
+    snprintf(sql, sizeof(sql),
+             "SELECT DISTINCT file, line FROM sites WHERE name = ?%s "
+             "AND category IN ('call','sink','sanitizer','acl') ORDER BY file, line",
+             collate);
+    stmt = NULL;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) == SQLITE_OK)
+    {
+        sqlite3_bind_text(stmt, 1, query, -1, SQLITE_TRANSIENT);
+        char *last = NULL;
+        while (sqlite3_step(stmt) == SQLITE_ROW)
+        {
+            const char *file = (const char *)sqlite3_column_text(stmt, 0);
+            if (!file_passes(file, opts, scope_map))
+                continue;
+            out->references++;
+            if (!last || strcmp(last, file) != 0)
+            {
+                out->reference_files++;
+                free(last);
+                last = tt_strdup(file);
+            }
+        }
+        free(last);
+        sqlite3_finalize(stmt);
+    }
+}
+
+static void add_defs_refs(cJSON *result, const defref_t *dr)
+{
+    if (!dr->enabled)
+        return;
+    cJSON_AddNumberToObject(result, "definitions", dr->definitions);
+    if (dr->has_sites)
+    {
+        cJSON_AddNumberToObject(result, "references", dr->references);
+        cJSON_AddNumberToObject(result, "reference_files", dr->reference_files);
+    }
+}
+
 cJSON *tt_cmd_search_symbols_exec(tt_cli_opts_t *opts)
 {
     tt_timer_start();
@@ -284,7 +456,7 @@ cJSON *tt_cmd_search_symbols_exec(tt_cli_opts_t *opts)
         cJSON *err = make_error("invalid_kind", "Unknown kind filter value.",
                                 "Valid kinds: class, interface, trait, enum, function, "
                                 "method, constant, property, variable, namespace, type, "
-                                "directive, chapter, section, subsection");
+                                "directive, chapter, section, subsection, subroutine");
         cJSON_AddStringToObject(err, "invalid_value", invalid_kind);
         free(invalid_kind);
         free(project_path);
@@ -380,6 +552,10 @@ cJSON *tt_cmd_search_symbols_exec(tt_cli_opts_t *opts)
         }
         tt_import_array_free(imps, imp_count);
     }
+
+    /* Definitions vs references for identifier queries */
+    defref_t defref;
+    count_defs_refs(db.db, query, opts, scope_map, &defref);
 
     /* Build filtered result array (apply filter/exclude, unique, sort, limit) */
     /* Step 1: collect passing results into pointer array */
@@ -489,6 +665,7 @@ cJSON *tt_cmd_search_symbols_exec(tt_cli_opts_t *opts)
             result = cJSON_CreateObject();
             cJSON_AddStringToObject(result, "q", query);
             cJSON_AddNumberToObject(result, "count", fcount);
+            add_defs_refs(result, &defref);
         }
 
         if (result)
@@ -564,6 +741,10 @@ cJSON *tt_cmd_search_symbols_exec(tt_cli_opts_t *opts)
                                            source);
         free(source_buf);
         if (!item) continue;
+
+        if (defref.enabled && is_definition_kind(filtered[i]->sym.kind) &&
+            name_matches(filtered[i]->sym.name, query, opts->case_sensitive))
+            cJSON_AddTrueToObject(item, "definition");
 
         /* Debug mode: add per-field score breakdown */
         if (opts->debug && dbg_query_lower) {
@@ -643,6 +824,7 @@ cJSON *tt_cmd_search_symbols_exec(tt_cli_opts_t *opts)
         cJSON_AddStringToObject(result, "q", query);
         cJSON_AddItemToObject(result, "results", results_array);
         cJSON_AddNumberToObject(result, "n", fcount);
+        add_defs_refs(result, &defref);
 
         if (opts->token_budget > 0)
         {
@@ -822,9 +1004,10 @@ cJSON *tt_cmd_search_text_exec(tt_cli_opts_t *opts)
     }
 
     /* Text search options (uncap for count mode to get true total) */
+    /* Default 100; an explicit --max may ask for the full set (grep parity). */
     int max_results = opts->max > 0 ? opts->max : 100;
-    if (max_results > 500)
-        max_results = 500;
+    if (max_results > 20000)
+        max_results = 20000;
     if (opts->count)
         max_results = 100000;
 

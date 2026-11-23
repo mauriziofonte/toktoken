@@ -1,7 +1,7 @@
 /*
  * mcp_tools.c -- MCP tool definitions, schemas, and execution bridge.
  *
- * All 27 TokToken tools: schema generation + argument→CLI bridge.
+ * All 32 TokToken tools: schema generation + argument→CLI bridge.
  * Each execute function converts cJSON arguments into tt_cli_opts_t
  * and calls the corresponding tt_cmd_*_exec() function.
  */
@@ -18,6 +18,7 @@
 #include "cmd_bundle.h"
 #include "cmd_suggest.h"
 #include "cmd_help.h"
+#include "cmd_security.h"
 #include "error.h"
 
 #include <stdlib.h>
@@ -1448,6 +1449,115 @@ static cJSON *execute_help(struct tt_mcp_server_t *srv, const cJSON *arguments)
     return tt_cmd_help_exec(command);
 }
 
+/* ---- security:* ---- */
+
+static cJSON *schema_security(bool flow)
+{
+    cJSON *s = cJSON_CreateObject();
+    cJSON_AddStringToObject(s, "type", "object");
+    cJSON *props = cJSON_CreateObject();
+    add_string_prop(props, "path", "Project root path (default: cwd)");
+    add_string_prop(props, "scope",
+                    flow ? "Restrict flow origins to a directory, file or glob (e.g. 'cron', 'cron/*.cgi')"
+                         : "Restrict to a directory, file or glob (e.g. 'cron', 'cron/*.cgi')");
+    add_string_prop(props, "kind",
+                    flow ? "Comma-separated sink names or classes to reach (e.g. 'system,exec' or 'command')"
+                         : "Comma-separated site names (sinks also match class: command, file_write, eval)");
+    add_string_prop(props, "taint",
+                    flow ? "Source origins to follow: in,env,argv,config,file,stdin,any (default: any)"
+                         : "Sinks only: keep sites whose argument carries in,env,argv,config,file,stdin,param or any");
+    add_boolean_prop(props, "unsanitized",
+                     "Drop entries whose argument expression contains a sanitizer call");
+    add_string_prop(props, "entry", "Only entry-point files: cgi, unauth (pre-authentication), script");
+    add_string_prop(props, "filter", "Include only files matching substring (pipe-separated OR)");
+    add_string_prop(props, "exclude", "Exclude files matching substring (pipe-separated OR)");
+    add_string_prop(props, "file", "Filter by file glob pattern");
+    add_integer_prop(props, "limit", flow ? "Maximum flows returned (default: 50)"
+                                          : "Maximum results returned (default: 100)");
+    add_integer_prop(props, "token_budget", "Stop adding entries once the estimated tokens exceed N");
+    add_boolean_prop(props, "compact", "Compact output (short keys)");
+    add_boolean_prop(props, "count", flow ? "Return counts per sink only" : "Return counts per name only");
+    if (flow)
+        add_integer_prop(props, "depth", "Maximum call hops between source and sink (default: 3, max: 6)");
+    cJSON_AddItemToObject(s, "properties", props);
+    return s;
+}
+
+static cJSON *schema_security_list(void) { return schema_security(false); }
+static cJSON *schema_security_flow(void) { return schema_security(true); }
+
+static cJSON *execute_security(struct tt_mcp_server_t *srv, const cJSON *arguments,
+                               cJSON *(*exec)(tt_cli_opts_t *))
+{
+    tt_cli_opts_t opts;
+    init_opts_from_args(&opts, srv, arguments);
+    const char *positional[1] = {NULL};
+    if (arguments)
+    {
+        const char *v;
+        v = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(arguments, "scope"));
+        if (v && v[0])
+        {
+            positional[0] = v;
+            opts.positional = positional;
+            opts.positional_count = 1;
+        }
+        v = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(arguments, "kind"));
+        if (v)
+            opts.kind = v;
+        v = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(arguments, "taint"));
+        if (v)
+            opts.taint = v;
+        v = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(arguments, "entry"));
+        if (v)
+            opts.entry = v;
+        v = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(arguments, "filter"));
+        if (v)
+            opts.filter = v;
+        v = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(arguments, "exclude"));
+        if (v)
+            opts.exclude = v;
+        v = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(arguments, "file"));
+        if (v)
+            opts.file_glob = v;
+        opts.unsanitized = mcp_get_bool(arguments, "unsanitized");
+        opts.compact = mcp_get_bool(arguments, "compact");
+        opts.count = mcp_get_bool(arguments, "count");
+        opts.limit = mcp_get_int_or_default(arguments, "limit", 0);
+        opts.token_budget = mcp_get_int_or_default(arguments, "token_budget", 0);
+        opts.depth = mcp_get_int_or_default(arguments, "depth", 0);
+    }
+    cJSON *result = exec(&opts);
+    if (!result)
+        return mcp_tool_error(tt_error_get());
+    return result;
+}
+
+static cJSON *execute_security_sinks(struct tt_mcp_server_t *srv, const cJSON *arguments)
+{
+    return execute_security(srv, arguments, tt_cmd_security_sinks_exec);
+}
+
+static cJSON *execute_security_sources(struct tt_mcp_server_t *srv, const cJSON *arguments)
+{
+    return execute_security(srv, arguments, tt_cmd_security_sources_exec);
+}
+
+static cJSON *execute_security_sanitizers(struct tt_mcp_server_t *srv, const cJSON *arguments)
+{
+    return execute_security(srv, arguments, tt_cmd_security_sanitizers_exec);
+}
+
+static cJSON *execute_security_acl_gates(struct tt_mcp_server_t *srv, const cJSON *arguments)
+{
+    return execute_security(srv, arguments, tt_cmd_security_acl_gates_exec);
+}
+
+static cJSON *execute_security_flow(struct tt_mcp_server_t *srv, const cJSON *arguments)
+{
+    return execute_security(srv, arguments, tt_cmd_security_flow_exec);
+}
+
 /* ---- Tool registration table ---- */
 
 const tt_mcp_tool_t TT_MCP_TOOLS[] = {
@@ -1563,6 +1673,34 @@ const tt_mcp_tool_t TT_MCP_TOOLS[] = {
      "Get suggested queries for exploring an unfamiliar codebase. Returns top keywords, kind/language distribution, most-imported files, and ready-to-run example queries. Call this first when starting work on a new repo.",
      schema_suggest,
      execute_suggest},
+    {"security_sinks",
+     "List security sinks recorded by the Perl/CGI parser: command execution (system, exec, backticks, qx, "
+     "open pipes, Webmin system_logged/backquote_command/execute_command), file writes, eval STRING. "
+     "Each entry has file:line, enclosing subroutine, raw argument text, origins reaching the argument "
+     "(taint: in, env, argv, config, file, stdin), positional params, sanitizer hint and CGI entry flags.",
+     schema_security_list,
+     execute_security_sinks},
+    {"security_sources",
+     "List attacker-influenced inputs recorded by the Perl/CGI parser: $in{}/%in (CGI request), $ENV{}, "
+     "@ARGV, <STDIN>, $config{}/$gconfig{}, read_file* results. Scoped by directory/glob, ordered by file:line.",
+     schema_security_list,
+     execute_security_sources},
+    {"security_sanitizers",
+     "List escaping/validation calls (quotemeta, quote_escape, html_escape, urlize, command_as_user, "
+     "is_under_directory, allowed_*, can_*) recorded by the Perl/CGI parser.",
+     schema_security_list,
+     execute_security_sanitizers},
+    {"security_acl_gates",
+     "List access-control gates (get_module_acl, $access{}, foreign_available, can_use_module, "
+     "allowed_auth_file, check_allowed_path) recorded by the Perl/CGI parser.",
+     schema_security_list,
+     execute_security_acl_gates},
+    {"security_flow",
+     "Trace source -> sink chains (taint-lite reachability) within N call hops across files: "
+     "file:line chain [source, call..., sink], entry-point flags, sanitizer hint. Unresolvable tainted "
+     "calls are listed as unknown. Flow-insensitive and field-insensitive: candidates for review, not proofs.",
+     schema_security_flow,
+     execute_security_flow},
     {"help",
      "Get usage details for a TokToken tool, or list all tools. Returns parameters, types, defaults, and descriptions.",
      schema_help,

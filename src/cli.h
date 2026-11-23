@@ -100,6 +100,13 @@ typedef struct
     /* --diagnostic (structured JSONL diagnostics on stderr) */
     bool diagnostic;
 
+    /* security:* -- --taint in,env,argv,config,file,stdin,param|any;
+     * --unsanitized hides sites/flows through a sanitizer;
+     * --entry cgi|unauth|script keeps entry-point files only */
+    const char *taint;
+    bool unsanitized;
+    const char *entry;
+
     /* Progress callback (set by MCP layer, NULL for CLI) */
     void (*progress_cb)(void *ctx, int64_t done, int64_t total);
     void *progress_ctx;

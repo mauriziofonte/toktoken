@@ -10,6 +10,9 @@
 #include "fast_hash.h"
 #include "error.h"
 #include "str_util.h"
+#include "parser_perl.h"
+
+#include <cJSON.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -161,6 +164,17 @@ void tt_search_results_free(tt_search_results_t *r)
     r->count = 0;
 }
 
+cJSON *tt_file_flags_json(int flags)
+{
+    if (!flags)
+        return NULL;
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddBoolToObject(o, "is_cgi", (flags & TT_FILE_FLAG_CGI) != 0);
+    cJSON_AddBoolToObject(o, "is_unauthenticated", (flags & TT_FILE_FLAG_UNAUTH) != 0);
+    cJSON_AddBoolToObject(o, "is_script", (flags & TT_FILE_FLAG_SCRIPT) != 0);
+    return o;
+}
+
 void tt_stats_free(tt_stats_t *s)
 {
     if (!s)
@@ -168,6 +182,9 @@ void tt_stats_free(tt_stats_t *s)
     for (int i = 0; i < s->language_count; i++)
         free(s->languages[i].name);
     free(s->languages);
+    for (int i = 0; i < s->symbol_language_count; i++)
+        free(s->symbol_languages[i].name);
+    free(s->symbol_languages);
     for (int i = 0; i < s->kind_count; i++)
         free(s->kinds[i].name);
     free(s->kinds);
@@ -178,8 +195,8 @@ void tt_stats_free(tt_stats_t *s)
 }
 
 static const char *SQL_INSERT_FILE =
-    "INSERT OR REPLACE INTO files (path, hash, language, summary, size_bytes, mtime_sec, mtime_nsec, indexed_at) "
-    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+    "INSERT OR REPLACE INTO files (path, hash, language, summary, size_bytes, mtime_sec, mtime_nsec, indexed_at, flags) "
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
 static const char *SQL_INSERT_SYM =
     "INSERT OR REPLACE INTO symbols "
@@ -195,7 +212,7 @@ static const char *SQL_DELETE_SYMS =
     "DELETE FROM symbols WHERE file = ?";
 
 static const char *SQL_GET_FILE =
-    "SELECT path, hash, language, summary, size_bytes, indexed_at FROM files WHERE path = ?";
+    "SELECT path, hash, language, summary, size_bytes, indexed_at, flags FROM files WHERE path = ?";
 
 static const char *SQL_GET_SYM =
     "SELECT id, file, name, qualified_name, kind, language, signature, docstring, "
@@ -279,6 +296,15 @@ int tt_store_insert_file(tt_index_store_t *store, const char *path, const char *
                          int64_t mtime_sec, int64_t mtime_nsec,
                          const char *summary)
 {
+    return tt_store_insert_file_ex(store, path, hash, language, size_bytes,
+                                   mtime_sec, mtime_nsec, summary, 0);
+}
+
+int tt_store_insert_file_ex(tt_index_store_t *store, const char *path, const char *hash,
+                            const char *language, int64_t size_bytes,
+                            int64_t mtime_sec, int64_t mtime_nsec,
+                            const char *summary, int flags)
+{
     sqlite3_stmt *stmt = store->insert_file;
     const char *ts = tt_now_rfc3339();
 
@@ -290,6 +316,7 @@ int tt_store_insert_file(tt_index_store_t *store, const char *path, const char *
     sqlite3_bind_int64(stmt, 6, mtime_sec);
     sqlite3_bind_int64(stmt, 7, mtime_nsec);
     sqlite3_bind_text(stmt, 8, ts, -1, SQLITE_STATIC);
+    sqlite3_bind_int(stmt, 9, flags);
 
     int rc = sqlite3_step(stmt);
     sqlite3_reset(stmt);
@@ -876,6 +903,7 @@ int tt_store_get_file(tt_index_store_t *store, const char *path, tt_file_record_
         out->summary = col_strdup(stmt, 3);
         out->size_bytes = sqlite3_column_int64(stmt, 4);
         out->indexed_at = col_strdup(stmt, 5);
+        out->flags = sqlite3_column_int(stmt, 6);
         sqlite3_reset(stmt);
         return 0;
     }
@@ -1027,14 +1055,21 @@ int tt_store_get_stats(tt_index_store_t *store, tt_stats_t *out)
         sqlite3_finalize(stmt);
     }
 
-    /* Languages */
+    /* Languages: indexed files per language (same unit as suggest) */
     query_name_count(db,
-                     "SELECT language, COUNT(*) as cnt FROM symbols GROUP BY language ORDER BY cnt DESC",
+                     "SELECT language, COUNT(*) as cnt FROM files GROUP BY language "
+                     "ORDER BY cnt DESC, language",
                      &out->languages, &out->language_count);
+
+    /* Symbols per language */
+    query_name_count(db,
+                     "SELECT language, COUNT(*) as cnt FROM symbols GROUP BY language "
+                     "ORDER BY cnt DESC, language",
+                     &out->symbol_languages, &out->symbol_language_count);
 
     /* Kinds */
     query_name_count(db,
-                     "SELECT kind, COUNT(*) as cnt FROM symbols GROUP BY kind ORDER BY cnt DESC",
+                     "SELECT kind, COUNT(*) as cnt FROM symbols GROUP BY kind ORDER BY cnt DESC, kind",
                      &out->kinds, &out->kind_count);
 
     /* Directories */
@@ -1043,7 +1078,7 @@ int tt_store_get_stats(tt_index_store_t *store, tt_stats_t *out)
                      "    WHEN INSTR(path, '/') > 0 THEN SUBSTR(path, 1, INSTR(path, '/')) "
                      "    ELSE path "
                      "END as dir, COUNT(*) as cnt "
-                     "FROM files GROUP BY dir ORDER BY cnt DESC",
+                     "FROM files GROUP BY dir ORDER BY cnt DESC, dir",
                      &out->dirs, &out->dir_count);
 
     return 0;
@@ -1085,6 +1120,7 @@ int tt_store_truncate(tt_index_store_t *store)
 {
     char *errmsg = NULL;
     int rc = sqlite3_exec(store->db->db,
+                          "DELETE FROM sites; DELETE FROM imports; "
                           "DELETE FROM symbols; DELETE FROM files;", NULL, NULL, &errmsg);
     if (rc != SQLITE_OK)
     {
@@ -1573,8 +1609,8 @@ int tt_store_insert_imports(tt_index_store_t *store, const tt_import_t *imps, in
 
     sqlite3_stmt *stmt = NULL;
     if (prepare(store->db->db,
-                "INSERT INTO imports (source_file, target_name, kind, import_type) "
-                "VALUES (?, ?, ?, ?)",
+                "INSERT INTO imports (source_file, target_name, kind, import_type, "
+                "line, dynamic, confidence) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 &stmt) < 0)
         return -1;
 
@@ -1589,6 +1625,48 @@ int tt_store_insert_imports(tt_index_store_t *store, const tt_import_t *imps, in
         sqlite3_bind_text(stmt, 2, imps[i].to_specifier ? imps[i].to_specifier : "", -1, SQLITE_STATIC);
         sqlite3_bind_text(stmt, 3, imps[i].symbol_name ? imps[i].symbol_name : "module", -1, SQLITE_STATIC);
         sqlite3_bind_text(stmt, 4, imps[i].import_type ? imps[i].import_type : "import", -1, SQLITE_STATIC);
+        sqlite3_bind_int(stmt, 5, imps[i].line);
+        sqlite3_bind_int(stmt, 6, imps[i].dynamic ? 1 : 0);
+        sqlite3_bind_double(stmt, 7, imps[i].confidence > 0.0 ? imps[i].confidence : 1.0);
+        sqlite3_step(stmt);
+        sqlite3_reset(stmt);
+    }
+
+    if (own_txn)
+        sqlite3_exec(store->db->db, "COMMIT", NULL, NULL, NULL);
+    sqlite3_finalize(stmt);
+    return 0;
+}
+
+int tt_store_insert_sites(tt_index_store_t *store, const tt_site_t *sites, int count)
+{
+    if (count <= 0)
+        return 0;
+
+    sqlite3_stmt *stmt = NULL;
+    if (prepare(store->db->db,
+                "INSERT INTO sites (file, line, category, name, qualifier, scope_id, args, "
+                "mask, arg_masks, trace) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                &stmt) < 0)
+        return -1;
+
+    bool own_txn = !store->db->in_transaction;
+    if (own_txn)
+        sqlite3_exec(store->db->db, "BEGIN", NULL, NULL, NULL);
+
+    for (int i = 0; i < count; i++)
+    {
+        const tt_site_t *st = &sites[i];
+        sqlite3_bind_text(stmt, 1, st->file ? st->file : "", -1, SQLITE_STATIC);
+        sqlite3_bind_int(stmt, 2, st->line);
+        sqlite3_bind_text(stmt, 3, tt_site_category_str(st->category), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 4, st->name ? st->name : "", -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 5, st->qualifier ? st->qualifier : "", -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 6, st->scope_id ? st->scope_id : "", -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 7, st->args ? st->args : "", -1, SQLITE_STATIC);
+        sqlite3_bind_int64(stmt, 8, (sqlite3_int64)st->mask);
+        sqlite3_bind_text(stmt, 9, st->arg_masks ? st->arg_masks : "", -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 10, st->trace ? st->trace : "", -1, SQLITE_STATIC);
         sqlite3_step(stmt);
         sqlite3_reset(stmt);
     }
@@ -1637,6 +1715,7 @@ static const char *RESOLVE_EXTENSIONS[] = {
     ".swift",
     ".hs",
     ".c", ".h", ".cpp", ".hpp", ".cc",
+    ".pm", ".pl", ".cgi", /* Perl: use Foo::Bar -> Foo/Bar.pm */
     NULL
 };
 
@@ -2233,13 +2312,26 @@ int tt_store_resolve_imports(tt_index_store_t *store)
     return 0;
 }
 
-static tt_import_t *read_import_rows(sqlite3_stmt *stmt, int *out_count)
+/* Rows: source_file, target_name, kind, import_type [, line, dynamic,
+ * confidence]. With dedupe_source, only the first row per source_file is
+ * kept (the query orders rows deterministically). */
+static tt_import_t *read_import_rows_ex(sqlite3_stmt *stmt, int *out_count, bool dedupe_source)
 {
     tt_array_t results;
     tt_array_init(&results);
+    int ncols = sqlite3_column_count(stmt);
+    char *last_source = NULL;
 
     while (sqlite3_step(stmt) == SQLITE_ROW)
     {
+        if (dedupe_source)
+        {
+            const char *src = (const char *)sqlite3_column_text(stmt, 0);
+            if (last_source && src && strcmp(last_source, src) == 0)
+                continue;
+            free(last_source);
+            last_source = src ? tt_strdup(src) : NULL;
+        }
         tt_import_t *imp = calloc(1, sizeof(tt_import_t));
         if (!imp)
             break;
@@ -2247,8 +2339,15 @@ static tt_import_t *read_import_rows(sqlite3_stmt *stmt, int *out_count)
         imp->to_specifier = col_strdup(stmt, 1);
         imp->symbol_name = col_strdup_nullable(stmt, 2);
         imp->import_type = col_strdup(stmt, 3);
+        if (ncols >= 7)
+        {
+            imp->line = sqlite3_column_int(stmt, 4);
+            imp->dynamic = sqlite3_column_int(stmt, 5);
+            imp->confidence = sqlite3_column_double(stmt, 6);
+        }
         tt_array_push(&results, imp);
     }
+    free(last_source);
 
     *out_count = (int)results.len;
     tt_import_t *arr = calloc(results.len > 0 ? results.len : 1, sizeof(tt_import_t));
@@ -2265,20 +2364,25 @@ static tt_import_t *read_import_rows(sqlite3_stmt *stmt, int *out_count)
     return arr;
 }
 
+static tt_import_t *read_import_rows(sqlite3_stmt *stmt, int *out_count)
+{
+    return read_import_rows_ex(stmt, out_count, false);
+}
+
 int tt_store_get_importers(tt_index_store_t *store, const char *file_path,
                            tt_import_t **out, int *out_count)
 {
     sqlite3_stmt *stmt = NULL;
     if (prepare(store->db->db,
-                "SELECT source_file, target_name, kind, import_type "
+                "SELECT source_file, target_name, kind, import_type, line, dynamic, confidence "
                 "FROM imports WHERE resolved_file = ? "
-                "GROUP BY source_file",
+                "ORDER BY source_file, dynamic, line, id",
                 &stmt) < 0)
         return -1;
 
     sqlite3_bind_text(stmt, 1, file_path, -1, SQLITE_TRANSIENT);
 
-    *out = read_import_rows(stmt, out_count);
+    *out = read_import_rows_ex(stmt, out_count, true);
     sqlite3_finalize(stmt);
     return 0;
 }
@@ -2347,8 +2451,9 @@ int tt_store_find_references(tt_index_store_t *store, const char *identifier,
 {
     sqlite3_stmt *stmt = NULL;
     if (prepare(store->db->db,
-                "SELECT source_file, target_name, kind, import_type "
-                "FROM imports WHERE kind LIKE ? OR target_name LIKE ?",
+                "SELECT source_file, target_name, kind, import_type, line, dynamic, confidence "
+                "FROM imports WHERE kind LIKE ? OR target_name LIKE ? "
+                "ORDER BY source_file, line, id",
                 &stmt) < 0)
         return -1;
 
@@ -3106,4 +3211,244 @@ tt_hashmap_t *tt_store_load_centrality(tt_index_store_t *store)
     }
     sqlite3_finalize(stmt);
     return map;
+}
+
+/* ==== Framework entry-point flags (Webmin unauthcgi) ==== */
+
+/* Minimal regex matcher for framework URL patterns: ^ $ . [] [^] \x
+ * escapes and the * + ? quantifiers. No groups or alternation. */
+static int mini_match_here(const char *re, const char *text);
+
+static const char *mini_atom_end(const char *re)
+{
+    if (*re == '\\' && re[1])
+        return re + 2;
+    if (*re == '[')
+    {
+        const char *p = re + 1;
+        if (*p == '^')
+            p++;
+        if (*p == ']')
+            p++;
+        while (*p && *p != ']')
+        {
+            if (*p == '\\' && p[1])
+                p++;
+            p++;
+        }
+        return *p ? p + 1 : p;
+    }
+    return re + 1;
+}
+
+static int mini_atom_match(const char *re, const char *re_end, char c)
+{
+    if (!c)
+        return 0;
+    if (*re == '.')
+        return 1;
+    if (*re == '\\')
+    {
+        char e = re[1];
+        switch (e)
+        {
+        case 'd': return isdigit((unsigned char)c);
+        case 'w': return isalnum((unsigned char)c) || c == '_';
+        case 's': return isspace((unsigned char)c);
+        default: return c == e;
+        }
+    }
+    if (*re == '[')
+    {
+        const char *p = re + 1;
+        int neg = 0;
+        if (*p == '^')
+        {
+            neg = 1;
+            p++;
+        }
+        int hit = 0;
+        const char *end = re_end - 1; /* points at ']' */
+        while (p < end)
+        {
+            char lo = *p;
+            if (lo == '\\' && p + 1 < end)
+            {
+                p++;
+                lo = *p;
+            }
+            if (p + 2 < end && p[1] == '-')
+            {
+                char hi = p[2];
+                if (hi == '\\' && p + 3 < end)
+                {
+                    hi = p[3];
+                    p++;
+                }
+                if (c >= lo && c <= hi)
+                    hit = 1;
+                p += 3;
+                continue;
+            }
+            if (c == lo)
+                hit = 1;
+            p++;
+        }
+        return neg ? !hit : hit;
+    }
+    return *re == c;
+}
+
+static int mini_match_here(const char *re, const char *text)
+{
+    for (;;)
+    {
+        if (!*re)
+            return 1;
+        if (re[0] == '$' && !re[1])
+            return *text == '\0';
+        const char *ae = mini_atom_end(re);
+        char q = *ae;
+        if (q == '*' || q == '+' || q == '?')
+        {
+            const char *rest = ae + 1;
+            int n = 0;
+            const char *t = text;
+            while (*t && mini_atom_match(re, ae, *t) && (q != '?' || n < 1))
+            {
+                t++;
+                n++;
+            }
+            int min = (q == '+') ? 1 : 0;
+            for (int k = n; k >= min; k--)
+            {
+                if (mini_match_here(rest, text + k))
+                    return 1;
+            }
+            return 0;
+        }
+        if (!mini_atom_match(re, ae, *text))
+            return 0;
+        re = ae;
+        text++;
+    }
+}
+
+static int mini_match(const char *re, const char *text)
+{
+    if (*re == '^')
+        return mini_match_here(re + 1, text);
+    do
+    {
+        if (mini_match_here(re, text))
+            return 1;
+    } while (*text++);
+    return 0;
+}
+
+int tt_store_apply_entry_flags(tt_index_store_t *store)
+{
+    if (!store || !store->db)
+        return -1;
+    sqlite3 *db = store->db->db;
+
+    /* Collect unauthenticated CGI patterns declared by the framework. */
+    tt_array_t pats;
+    tt_array_init(&pats);
+    sqlite3_stmt *st = NULL;
+    if (prepare(db, "SELECT args FROM sites WHERE category = 'harness' AND name = 'unauthcgi' "
+                    "ORDER BY file, line",
+                &st) == 0)
+    {
+        while (sqlite3_step(st) == SQLITE_ROW)
+        {
+            const char *raw = (const char *)sqlite3_column_text(st, 0);
+            if (!raw)
+                continue;
+            /* Perl double-quoted escapes: \$ -> $, \\ -> \ */
+            char *un = malloc(strlen(raw) + 1);
+            if (!un)
+                continue;
+            size_t j = 0;
+            for (const char *p = raw; *p; p++)
+            {
+                if (*p == '\\' && (p[1] == '$' || p[1] == '\\' || p[1] == '@' || p[1] == '"'))
+                    p++;
+                un[j++] = *p;
+            }
+            un[j] = '\0';
+            /* Whitespace-separated pattern list */
+            char *w = un;
+            while (*w)
+            {
+                while (*w && isspace((unsigned char)*w))
+                    w++;
+                char *e = w;
+                while (*e && !isspace((unsigned char)*e))
+                    e++;
+                if (e > w)
+                    tt_array_push(&pats, tt_strndup(w, (size_t)(e - w)));
+                w = e;
+            }
+            free(un);
+        }
+        sqlite3_finalize(st);
+    }
+
+    sqlite3_exec(db, "UPDATE files SET flags = flags & ~2 WHERE flags & 2", NULL, NULL, NULL);
+    if (pats.len == 0)
+    {
+        tt_array_free(&pats);
+        return 0;
+    }
+
+    sqlite3_stmt *sel = NULL;
+    sqlite3_stmt *upd = NULL;
+    if (prepare(db, "SELECT path FROM files WHERE flags & 1", &sel) < 0 ||
+        prepare(db, "UPDATE files SET flags = flags | 2 WHERE path = ?", &upd) < 0)
+    {
+        if (sel)
+            sqlite3_finalize(sel);
+        for (size_t k = 0; k < pats.len; k++)
+            free(pats.items[k]);
+        tt_array_free(&pats);
+        return -1;
+    }
+    tt_array_t hits;
+    tt_array_init(&hits);
+    while (sqlite3_step(sel) == SQLITE_ROW)
+    {
+        const char *path = (const char *)sqlite3_column_text(sel, 0);
+        if (!path)
+            continue;
+        size_t plen = strlen(path);
+        char *url = malloc(plen + 2);
+        if (!url)
+            continue;
+        url[0] = '/';
+        memcpy(url + 1, path, plen + 1);
+        for (size_t k = 0; k < pats.len; k++)
+        {
+            if (mini_match((const char *)pats.items[k], url))
+            {
+                tt_array_push(&hits, tt_strdup(path));
+                break;
+            }
+        }
+        free(url);
+    }
+    sqlite3_finalize(sel);
+    for (size_t k = 0; k < hits.len; k++)
+    {
+        sqlite3_bind_text(upd, 1, (const char *)hits.items[k], -1, SQLITE_TRANSIENT);
+        sqlite3_step(upd);
+        sqlite3_reset(upd);
+        free(hits.items[k]);
+    }
+    sqlite3_finalize(upd);
+    tt_array_free(&hits);
+    for (size_t k = 0; k < pats.len; k++)
+        free(pats.items[k]);
+    tt_array_free(&pats);
+    return 0;
 }

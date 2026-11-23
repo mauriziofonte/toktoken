@@ -85,7 +85,12 @@ Add these entries to the `permissions.allow` array:
             "mcp__toktoken__inspect_dependencies",
             "mcp__toktoken__inspect_hierarchy",
             "mcp__toktoken__inspect_blast_radius",
-            "mcp__toktoken__inspect_cycles"
+            "mcp__toktoken__inspect_cycles",
+            "mcp__toktoken__security_sinks",
+            "mcp__toktoken__security_sources",
+            "mcp__toktoken__security_sanitizers",
+            "mcp__toktoken__security_acl_gates",
+            "mcp__toktoken__security_flow"
         ]
     }
 }

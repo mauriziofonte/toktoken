@@ -33,6 +33,7 @@ extern void run_int_pipeline_tests(void);
 extern void run_int_v020_tests(void);
 extern void run_int_resolve_tests(void);
 extern void run_int_multilang_tests(void);
+extern void run_int_security_tests(void);
 
 int main(void)
 {
@@ -111,6 +112,9 @@ int main(void)
 
     TT_SUITE("Multi-Language (integration)");
     run_int_multilang_tests();
+
+    TT_SUITE("Security (Perl/CGI)");
+    run_int_security_tests();
 
     TT_SUMMARY();
 }

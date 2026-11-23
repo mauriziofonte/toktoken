@@ -16,6 +16,7 @@
 #include "cmd_update.h"
 #include "cmd_suggest.h"
 #include "cmd_help.h"
+#include "cmd_security.h"
 #include "update_check.h"
 
 #include <stdio.h>
@@ -79,6 +80,13 @@ static void print_usage(void)
             "  inspect:cycles              Detect circular import cycles\n"
             "  inspect:blast <id>          Symbol blast radius analysis\n"
             "\n"
+            "Security (Perl/CGI sites):\n"
+            "  security:sinks [scope]       Command exec, file writes, eval STRING\n"
+            "  security:sources [scope]     $in{}, %%ENV, @ARGV, $config{}, read_file\n"
+            "  security:sanitizers [scope]  Escaping/validation calls\n"
+            "  security:acl-gates [scope]   Access-control checks\n"
+            "  security:flow [scope]        Source -> sink chains across calls\n"
+            "\n"
             "Help:\n"
             "  help [command]         List all tools or show detailed usage\n"
             "\n"
@@ -122,6 +130,13 @@ static void print_usage(void)
             "      --token-budget <n> Max token budget for results\n"
             "      --scope-imports-of <file>  Scope to files imported by file\n"
             "      --scope-importers-of <file> Scope to files that import file\n"
+            "\n"
+            "Security options:\n"
+            "      --taint <list>     in,env,argv,config,file,stdin,param,any\n"
+            "      --unsanitized      Drop sites/flows with a sanitizer in the argument\n"
+            "      --entry <type>     Entry-point files only: cgi, unauth, script\n"
+            "  -k, --kind <names>     Site names or sink classes (system,open_pipe,command)\n"
+            "      --file <glob>      Restrict to files matching glob\n"
             "\n"
             "Find options:\n"
             "      --has-importers    Enrich importers with has_importers flag\n"
@@ -192,6 +207,11 @@ static const cmd_entry_t commands[] = {
     {"inspect:blast", tt_cmd_inspect_blast},
     {"suggest", tt_cmd_suggest},
     {"serve", tt_cmd_serve},
+    {"security:sinks", tt_cmd_security_sinks},
+    {"security:sources", tt_cmd_security_sources},
+    {"security:sanitizers", tt_cmd_security_sanitizers},
+    {"security:acl-gates", tt_cmd_security_acl_gates},
+    {"security:flow", tt_cmd_security_flow},
     {"help", tt_cmd_help},
     {NULL, NULL}};
 
@@ -284,6 +304,19 @@ int main(int argc, char *argv[])
     {
         tt_cli_opts_free(&opts);
         return 1;
+    }
+
+    /* Queries on an index written with an older format (symbol kinds or
+     * IDs changed) rebuild it first, so stable IDs stay consistent. */
+    if (strncmp(cmd_name, "index:", 6) != 0 && strcmp(cmd_name, "cache:clear") != 0 &&
+        strcmp(cmd_name, "codebase:detect") != 0 && strcmp(cmd_name, "serve") != 0 &&
+        strcmp(cmd_name, "help") != 0 && strncmp(cmd_name, "repos:", 6) != 0 &&
+        strcmp(cmd_name, "projects:list") != 0)
+    {
+        const char *raw = opts.path;
+        if (!raw && opts.positional_count > 0 && strcmp(cmd_name, "suggest") == 0)
+            raw = opts.positional[0];
+        tt_index_ensure_format(raw);
     }
 
     /* Dispatch */

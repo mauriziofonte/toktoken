@@ -1,8 +1,8 @@
 /*
  * symbol_kind.h -- Symbol kind enum and ctags kind mapping.
  *
- * 15 canonical symbol kinds. Maps ctags output kinds (35 entries)
- * to canonical values. Unknown kinds fall back to TT_KIND_VARIABLE.
+ * 16 canonical symbol kinds. Maps ctags output kinds to canonical
+ * values. Unknown kinds fall back to TT_KIND_VARIABLE.
  */
 
 #ifndef TT_SYMBOL_KIND_H
@@ -27,11 +27,13 @@ typedef enum
     /* Documentation kinds (Markdown, reStructuredText, etc.) */
     TT_KIND_CHAPTER,
     TT_KIND_SECTION,
-    TT_KIND_SUBSECTION
+    TT_KIND_SUBSECTION,
+    /* Perl/Fortran/BASIC-style named routine (appended: keeps enum values stable) */
+    TT_KIND_SUBROUTINE
 } tt_symbol_kind_e;
 
 /* Total number of canonical kinds. */
-#define TT_KIND_COUNT 15
+#define TT_KIND_COUNT 16
 
 /*
  * tt_kind_from_ctags -- Convert ctags kind string to enum.
@@ -61,7 +63,7 @@ const char *tt_kind_label(tt_symbol_kind_e kind);
  *
  * Single-line: constant, variable, property, namespace, type, directive.
  * Multi-line:  class, interface, trait, enum, function, method,
- *              chapter, section, subsection.
+ *              chapter, section, subsection, subroutine.
  */
 bool tt_kind_is_single_line(tt_symbol_kind_e kind);
 
@@ -70,9 +72,16 @@ bool tt_kind_is_single_line(tt_symbol_kind_e kind);
  *
  * Returns true for: class, interface, trait, enum, function, method,
  * constant, property, variable, namespace, type, directive,
- * chapter, section, subsection.
+ * chapter, section, subsection, subroutine.
  * Case-insensitive comparison.
  */
 bool tt_kind_is_valid(const char *kind);
+
+/*
+ * tt_kind_filter_matches -- Kind filter semantics (--kind): case-insensitive
+ * exact match, plus "function" also matching "subroutine" (Perl/Fortran
+ * named routines). "subroutine" as a filter stays strict.
+ */
+bool tt_kind_filter_matches(const char *filter, const char *kind);
 
 #endif /* TT_SYMBOL_KIND_H */

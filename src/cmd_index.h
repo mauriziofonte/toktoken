@@ -41,4 +41,13 @@ int tt_cmd_index_file(tt_cli_opts_t *opts);
 
 cJSON *tt_cmd_index_file_exec(tt_cli_opts_t *opts);
 
+/*
+ * tt_index_ensure_format -- Rebuild an index written with an older index
+ * format (symbol kinds/IDs changed) before a query runs on it.
+ *
+ * raw_path: project path as given by the caller (NULL = cwd).
+ * Returns 1 when a rebuild ran, 0 when not needed or no index, -1 on error.
+ */
+int tt_index_ensure_format(const char *raw_path);
+
 #endif /* TT_CMD_INDEX_H */

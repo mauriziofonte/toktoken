@@ -79,9 +79,13 @@ static const char **build_include_dirs(tt_cli_opts_t *opts, const tt_config_t *c
 
 /* Set all standard metadata after indexing */
 static void set_metadata(tt_index_store_t *store, const char *project_path,
-                         bool full, const char **include_dirs)
+                         bool full, const char **include_dirs, const char *focus_json)
 {
     const char *ts = tt_now_rfc3339();
+    char fmt_str[8];
+    snprintf(fmt_str, sizeof(fmt_str), "%d", TT_INDEX_FORMAT);
+    tt_store_set_metadata(store, "index_format", fmt_str);
+    tt_store_set_metadata(store, "language_focus", focus_json ? focus_json : "");
     tt_store_set_metadata(store, "indexed_at", ts);
     tt_store_set_metadata(store, "project_path", project_path);
     tt_store_set_metadata(store, "toktoken_version", TT_VERSION);
@@ -147,6 +151,190 @@ static const char **build_extra_ignore(tt_cli_opts_t *opts, const tt_config_t *c
         arr[idx++] = opts->ignore_patterns[i];
     arr[idx] = NULL;
     return arr;
+}
+
+/* ---- Language focus (--languages, ecosystem profiles) ---- */
+
+typedef struct
+{
+    const char *lang;
+    int count;
+} lang_count_t;
+
+static const char *canonical_language(const char *name)
+{
+    static const struct
+    {
+        const char *alias;
+        const char *lang;
+    } ALIASES[] = {
+        {"js", "javascript"}, {"ts", "typescript"}, {"py", "python"}, {"pl", "perl"},
+        {"sh", "bash"},       {"shell", "bash"},    {"c++", "cpp"},   {"rb", "ruby"},
+    };
+    for (size_t i = 0; i < sizeof(ALIASES) / sizeof(ALIASES[0]); i++)
+    {
+        if (tt_strcasecmp(name, ALIASES[i].alias) == 0)
+            return ALIASES[i].lang;
+    }
+    return name;
+}
+
+static bool lang_in_list(const char *lang, char **list, int n)
+{
+    for (int i = 0; i < n; i++)
+    {
+        if (tt_strcasecmp(canonical_language(list[i]), lang) == 0)
+            return true;
+    }
+    return false;
+}
+
+/* Companion languages kept when Perl is the primary ecosystem
+ * (CGI/web admin code: Perl + browser JavaScript + shell helpers). */
+static const char *PERL_PROFILE_LANGS[] = {"perl", "javascript", "bash", "markdown", NULL};
+
+static bool in_profile(const char *lang)
+{
+    for (const char **p = PERL_PROFILE_LANGS; *p; p++)
+    {
+        if (strcmp(*p, lang) == 0)
+            return true;
+    }
+    return false;
+}
+
+/*
+ * apply_language_focus -- Restrict discovered paths by language.
+ *
+ * 1. Explicit list (--languages or config "languages"): keep only those.
+ * 2. Otherwise, unless full: when Perl is the primary ecosystem (>= 50% of
+ *    code files), keep the Perl profile languages only. Other primaries are
+ *    left untouched.
+ * Returns a JSON object describing the applied focus, or NULL if none.
+ */
+static cJSON *apply_language_focus(tt_discovered_paths_t *d, const tt_cli_opts_t *opts,
+                                   const tt_config_t *config)
+{
+    char **explicit_list = NULL;
+    int explicit_n = 0;
+    char **cli_parts = NULL;
+    if (opts->languages && opts->languages[0])
+    {
+        cli_parts = tt_str_split(opts->languages, ',', &explicit_n);
+        explicit_list = cli_parts;
+        for (int i = 0; i < explicit_n; i++)
+            tt_str_trim(explicit_list[i]);
+    }
+    else if (config && config->language_count > 0)
+    {
+        explicit_list = config->languages;
+        explicit_n = config->language_count;
+    }
+
+    /* Census by detected language. */
+    lang_count_t counts[64];
+    int ncounts = 0;
+    int code_total = 0;
+    for (int i = 0; i < d->count; i++)
+    {
+        const char *lang = tt_detect_language(d->paths[i]);
+        if (!lang)
+            continue;
+        int k;
+        for (k = 0; k < ncounts; k++)
+        {
+            if (strcmp(counts[k].lang, lang) == 0)
+                break;
+        }
+        if (k == ncounts && ncounts < 64)
+        {
+            counts[ncounts].lang = lang;
+            counts[ncounts].count = 0;
+            ncounts++;
+        }
+        if (k < ncounts)
+            counts[k].count++;
+        if (strcmp(lang, "markdown") != 0)
+            code_total++;
+    }
+
+    const char *profile = NULL;
+    if (!explicit_list && !opts->full)
+    {
+        const char *primary = NULL;
+        int best = 0;
+        for (int k = 0; k < ncounts; k++)
+        {
+            if (strcmp(counts[k].lang, "markdown") == 0)
+                continue;
+            if (counts[k].count > best)
+            {
+                best = counts[k].count;
+                primary = counts[k].lang;
+            }
+        }
+        if (primary && strcmp(primary, "perl") == 0 && best * 2 >= code_total)
+            profile = "perl";
+    }
+
+    if (!explicit_list && !profile)
+    {
+        tt_str_split_free(cli_parts);
+        return NULL;
+    }
+
+    cJSON *excluded = cJSON_CreateObject();
+    int kept = 0;
+    for (int i = 0; i < d->count; i++)
+    {
+        const char *lang = tt_detect_language(d->paths[i]);
+        bool keep;
+        if (explicit_list)
+            keep = lang && lang_in_list(lang, explicit_list, explicit_n);
+        else
+            keep = lang && in_profile(lang);
+        if (keep)
+        {
+            d->paths[kept] = d->paths[i];
+            if (d->sizes)
+                d->sizes[kept] = d->sizes[i];
+            kept++;
+        }
+        else
+        {
+            const char *key = lang ? lang : "unknown";
+            cJSON *c = cJSON_GetObjectItemCaseSensitive(excluded, key);
+            if (c)
+                cJSON_SetNumberValue(c, c->valuedouble + 1);
+            else
+                cJSON_AddNumberToObject(excluded, key, 1);
+            free(d->paths[i]);
+        }
+    }
+    d->count = kept;
+
+    cJSON *focus = cJSON_CreateObject();
+    if (explicit_list)
+    {
+        cJSON_AddStringToObject(focus, "mode", "languages");
+        cJSON *langs = cJSON_CreateArray();
+        for (int i = 0; i < explicit_n; i++)
+            cJSON_AddItemToArray(langs, cJSON_CreateString(canonical_language(explicit_list[i])));
+        cJSON_AddItemToObject(focus, "languages", langs);
+    }
+    else
+    {
+        cJSON_AddStringToObject(focus, "mode", "profile");
+        cJSON_AddStringToObject(focus, "profile", profile);
+        cJSON *langs = cJSON_CreateArray();
+        for (const char **p = PERL_PROFILE_LANGS; *p; p++)
+            cJSON_AddItemToArray(langs, cJSON_CreateString(*p));
+        cJSON_AddItemToObject(focus, "languages", langs);
+        cJSON_AddStringToObject(focus, "override", "full=true (or --full) indexes every language");
+    }
+    cJSON_AddItemToObject(focus, "excluded_files", excluded);
+    tt_str_split_free(cli_parts);
+    return focus;
 }
 
 /* ---- index:create ---- */
@@ -261,6 +449,11 @@ cJSON *tt_cmd_index_create_exec(tt_cli_opts_t *opts)
     tt_file_filter_free(&ff);
     free(extra_ignore);
 
+    /* Language focus: --languages / config, or the Perl ecosystem profile. */
+    cJSON *focus = apply_language_focus(&discovered, opts, &config);
+    char *focus_json = focus ? cJSON_PrintUnformatted(focus) : NULL;
+    cJSON_Delete(focus);
+
     /* Apply max_files limit (CLI --max-files overrides config) */
     int max_files = opts->max_files > 0 ? opts->max_files : config.max_files;
     int skipped = 0;
@@ -282,6 +475,7 @@ cJSON *tt_cmd_index_create_exec(tt_cli_opts_t *opts)
         cJSON *err = make_error("no_files",
                                 "No source files found in the project",
                                 "Check that the directory contains source files and is not entirely excluded.");
+        free(focus_json);
         free(project_path);
         return err;
     }
@@ -303,6 +497,7 @@ cJSON *tt_cmd_index_create_exec(tt_cli_opts_t *opts)
         free(include_dirs);
         free(ctags_path);
         tt_config_free(&config);
+        free(focus_json);
         free(project_path);
         return err;
     }
@@ -318,6 +513,7 @@ cJSON *tt_cmd_index_create_exec(tt_cli_opts_t *opts)
         free(include_dirs);
         free(ctags_path);
         tt_config_free(&config);
+        free(focus_json);
         free(project_path);
         return err;
     }
@@ -362,6 +558,7 @@ cJSON *tt_cmd_index_create_exec(tt_cli_opts_t *opts)
         free(include_dirs);
         free(ctags_path);
         tt_config_free(&config);
+        free(focus_json);
         free(project_path);
         return err;
     }
@@ -394,6 +591,7 @@ cJSON *tt_cmd_index_create_exec(tt_cli_opts_t *opts)
         free(include_dirs);
         free(ctags_path);
         tt_config_free(&config);
+        free(focus_json);
         free(project_path);
         return err;
     }
@@ -440,6 +638,7 @@ cJSON *tt_cmd_index_create_exec(tt_cli_opts_t *opts)
                 "\"dur_ms\":%llu", (unsigned long long)(t3 - t2));
 
         tt_store_resolve_imports(&store);
+        tt_store_apply_entry_flags(&store);
         uint64_t t4 = tt_monotonic_ms();
         TT_DIAG("schema", "resolve_imports",
                 "\"dur_ms\":%llu", (unsigned long long)(t4 - t3));
@@ -453,7 +652,7 @@ cJSON *tt_cmd_index_create_exec(tt_cli_opts_t *opts)
                 "\"dur_ms\":%llu", (unsigned long long)(t5 - t0));
     }
 
-    set_metadata(&store, project_path, opts->full, include_dirs);
+    set_metadata(&store, project_path, opts->full, include_dirs, focus_json);
     free(include_dirs);
 
     /* WAL checkpoint */
@@ -476,6 +675,25 @@ cJSON *tt_cmd_index_create_exec(tt_cli_opts_t *opts)
                                 stats.languages[i].count);
     }
     cJSON_AddItemToObject(result, "languages", langs);
+    cJSON *sym_langs = cJSON_CreateObject();
+    for (int i = 0; i < stats.symbol_language_count; i++)
+    {
+        cJSON_AddNumberToObject(sym_langs, stats.symbol_languages[i].name,
+                                stats.symbol_languages[i].count);
+    }
+    cJSON_AddItemToObject(result, "symbols_by_language", sym_langs);
+    {
+        cJSON *units = cJSON_CreateObject();
+        cJSON_AddStringToObject(units, "languages", "files");
+        cJSON_AddStringToObject(units, "symbols_by_language", "symbols");
+        cJSON_AddItemToObject(result, "units", units);
+    }
+    if (focus_json)
+    {
+        cJSON *fj = cJSON_Parse(focus_json);
+        if (fj)
+            cJSON_AddItemToObject(result, "language_focus", fj);
+    }
 
     cJSON_AddNumberToObject(result, "duration_seconds", tt_timer_elapsed_sec());
 
@@ -525,6 +743,7 @@ cJSON *tt_cmd_index_create_exec(tt_cli_opts_t *opts)
     tt_database_close(&db);
     tt_discovered_paths_free(&discovered);
     tt_config_free(&config);
+    free(focus_json);
     free(project_path);
 
     return result;
@@ -754,6 +973,11 @@ cJSON *tt_cmd_index_update_exec(tt_cli_opts_t *opts)
     tt_file_filter_free(&ff);
     free(extra_ignore);
 
+    /* Language focus: --languages / config, or the Perl ecosystem profile. */
+    cJSON *focus = apply_language_focus(&discovered, opts, &config);
+    char *focus_json = focus ? cJSON_PrintUnformatted(focus) : NULL;
+    cJSON_Delete(focus);
+
     /* Apply max_files limit */
     int max_files = opts->max_files > 0 ? opts->max_files : config.max_files;
     if (discovered.count > max_files)
@@ -769,6 +993,9 @@ cJSON *tt_cmd_index_update_exec(tt_cli_opts_t *opts)
             discovered.count,
             (unsigned long long)(t_upd_discovery_done - t_upd_discovery_start));
 
+    /* Index format changed (symbol kinds / IDs): rebuild everything. */
+    bool format_rebuild = (tt_schema_index_format(db.db) != TT_INDEX_FORMAT);
+
     /* Init store */
     tt_index_store_t store;
     if (tt_store_init(&store, &db) < 0)
@@ -781,6 +1008,13 @@ cJSON *tt_cmd_index_update_exec(tt_cli_opts_t *opts)
         free(project_path);
         tt_error_set("Failed to prepare statements");
         return NULL;
+    }
+
+    if (format_rebuild)
+    {
+        /* Every file becomes "added": the pipeline re-parses the project. */
+        tt_store_truncate(&store);
+        sqlite3_exec(db.db, "DELETE FROM file_centrality;", NULL, NULL, NULL);
     }
 
     /* Phase 1b: Fast change detection (stat-based, no content hashing) */
@@ -834,7 +1068,7 @@ cJSON *tt_cmd_index_update_exec(tt_cli_opts_t *opts)
             }
         }
 
-        set_metadata(&store, project_path, opts->full, include_dirs);
+        set_metadata(&store, project_path, opts->full, include_dirs, focus_json);
         free(include_dirs);
 
         cJSON *result = cJSON_CreateObject();
@@ -849,6 +1083,7 @@ cJSON *tt_cmd_index_update_exec(tt_cli_opts_t *opts)
         free(ctags_path);
         tt_config_free(&config);
         tt_database_close(&db);
+        free(focus_json);
         free(project_path);
         return result;
     }
@@ -865,6 +1100,7 @@ cJSON *tt_cmd_index_update_exec(tt_cli_opts_t *opts)
         free(ctags_path);
         tt_config_free(&config);
         tt_database_close(&db);
+        free(focus_json);
         free(project_path);
         return err;
     }
@@ -1055,6 +1291,7 @@ cJSON *tt_cmd_index_update_exec(tt_cli_opts_t *opts)
                 TT_DIAG("schema", "centrality",
                         "\"dur_ms\":0,\"skipped\":true");
             }
+            tt_store_apply_entry_flags(&store);
         }
         else
         {
@@ -1075,6 +1312,7 @@ cJSON *tt_cmd_index_update_exec(tt_cli_opts_t *opts)
                     "\"dur_ms\":%llu", (unsigned long long)(t3 - t2));
 
             tt_store_resolve_imports(&store);
+            tt_store_apply_entry_flags(&store);
             uint64_t t4 = tt_monotonic_ms();
             TT_DIAG("schema", "resolve_imports",
                     "\"dur_ms\":%llu", (unsigned long long)(t4 - t3));
@@ -1091,7 +1329,7 @@ cJSON *tt_cmd_index_update_exec(tt_cli_opts_t *opts)
                 use_incremental ? "true" : "false");
     }
 
-    set_metadata(&store, project_path, opts->full, include_dirs);
+    set_metadata(&store, project_path, opts->full, include_dirs, focus_json);
     free(include_dirs);
 
     /* WAL checkpoint */
@@ -1103,6 +1341,14 @@ cJSON *tt_cmd_index_update_exec(tt_cli_opts_t *opts)
     cJSON_AddNumberToObject(result, "added", changes.added_count);
     cJSON_AddNumberToObject(result, "deleted", changes.deleted_count);
     cJSON_AddNumberToObject(result, "duration_seconds", tt_timer_elapsed_sec());
+    if (format_rebuild)
+        cJSON_AddStringToObject(result, "rebuilt", "index_format");
+    if (focus_json)
+    {
+        cJSON *fj = cJSON_Parse(focus_json);
+        if (fj)
+            cJSON_AddItemToObject(result, "language_focus", fj);
+    }
 
     /* Capture RSS after schema work, before reporting peak */
     TT_DIAG_MEM();
@@ -1134,6 +1380,7 @@ interrupted:
     free(ctags_path);
     tt_config_free(&config);
     tt_database_close(&db);
+    free(focus_json);
     free(project_path);
     tt_error_set("Interrupted");
     return NULL;
@@ -1343,6 +1590,7 @@ cJSON *tt_cmd_index_file_exec(tt_cli_opts_t *opts)
     /* Resolve import specifiers to file paths */
     if (imps > 0)
         tt_store_resolve_imports(&store);
+    tt_store_apply_entry_flags(&store);
 
     cJSON *result = cJSON_CreateObject();
     cJSON_AddBoolToObject(result, "changed", true);
@@ -1374,4 +1622,43 @@ int tt_cmd_index_file(tt_cli_opts_t *opts)
     tt_json_print(result);
     cJSON_Delete(result);
     return 0;
+}
+
+/* ---- Automatic rebuild on index format change ---- */
+
+int tt_index_ensure_format(const char *raw_path)
+{
+    char *project_path = tt_resolve_project_path(raw_path);
+    if (!project_path)
+        return 0;
+    if (!tt_database_exists(project_path))
+    {
+        free(project_path);
+        return 0;
+    }
+
+    tt_database_t db;
+    memset(&db, 0, sizeof(db));
+    if (tt_database_open(&db, project_path) < 0)
+    {
+        free(project_path);
+        return -1;
+    }
+    int fmt = tt_schema_index_format(db.db);
+    tt_database_close(&db);
+    if (fmt == TT_INDEX_FORMAT)
+    {
+        free(project_path);
+        return 0;
+    }
+
+    tt_cli_opts_t o;
+    memset(&o, 0, sizeof(o));
+    o.path = project_path;
+    o.truncate_width = 120;
+    cJSON *r = tt_cmd_index_update_exec(&o);
+    int rc = (r && !cJSON_GetObjectItemCaseSensitive(r, "error")) ? 1 : -1;
+    cJSON_Delete(r);
+    free(project_path);
+    return rc;
 }

@@ -78,6 +78,7 @@ static const flag_def_t flag_table[] = {
     BOOL_FLAG('f', "full",           full),
     BOOL_FLAG( 0,  "full-clone",     full_clone),
     BOOL_FLAG( 0,  "update-only",    update_only),
+    BOOL_FLAG( 0,  "unsanitized",    unsanitized),
 
     /* Value flags (string) */
     STR_FLAG('p', "path",       path),
@@ -95,6 +96,8 @@ static const flag_def_t flag_table[] = {
     STR_FLAG( 0,  "scope-imports-of",   scope_imports_of),
     STR_FLAG( 0,  "scope-importers-of", scope_importers_of),
     STR_FLAG('b', "branch",     branch),
+    STR_FLAG( 0,  "taint",      taint),
+    STR_FLAG( 0,  "entry",      entry),
 
     /* Value flags (int) */
     INT_FLAG('l', "limit",      limit),

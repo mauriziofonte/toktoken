@@ -14,6 +14,7 @@ extern void run_str_util_tests(void);
 extern void run_hashmap_tests(void);
 extern void run_arena_tests(void);
 extern void run_symbol_kind_tests(void);
+extern void run_parser_perl_tests(void);
 extern void run_symbol_tests(void);
 extern void run_language_detector_tests(void);
 extern void run_normalizer_tests(void);
@@ -56,6 +57,9 @@ int main(void)
 
     TT_SUITE("SymbolKind");
     run_symbol_kind_tests();
+
+    TT_SUITE("ParserPerl");
+    run_parser_perl_tests();
 
     TT_SUITE("Symbol");
     run_symbol_tests();

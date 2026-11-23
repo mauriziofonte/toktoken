@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(toktoken VERSION 0.5.0 LANGUAGES C)
+project(toktoken VERSION 0.6.0 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -112,6 +112,14 @@ if(NOT WIN32)
     target_link_libraries(toktoken_core PUBLIC pthread m)
 endif()
 
+# POSIX regex (search:text --regex, grep -E semantics). Absent on MinGW:
+# there regex search goes through ripgrep.
+include(CheckIncludeFile)
+check_include_file(regex.h TT_HAVE_REGEX_H)
+if(TT_HAVE_REGEX_H)
+    target_compile_definitions(toktoken_core PUBLIC TT_HAVE_POSIX_REGEX)
+endif()
+
 # PCRE2 (system, optional -- skip for static builds to avoid dynamic .so conflict)
 if(NOT TT_STATIC)
     find_library(PCRE2_LIB pcre2-8)
@@ -143,6 +151,7 @@ if(BUILD_TESTS)
         tests/test_hashmap.c
         tests/test_arena.c
         tests/test_symbol_kind.c
+        tests/test_parser_perl.c
         tests/test_symbol.c
         tests/test_language_detector.c
         tests/test_normalizer.c
@@ -193,6 +202,7 @@ if(BUILD_TESTS)
         tests/test_int_v020.c
         tests/test_int_resolve.c
         tests/test_int_multilang.c
+        tests/test_int_security.c
         tests/test_helpers.c
         tests/test_integration_main.c
     )
@@ -219,6 +229,7 @@ if(BUILD_TESTS)
         tests/test_e2e_full_manage.c
         tests/test_e2e_full_langs.c
         tests/test_e2e_full_imports.c
+        tests/test_e2e_security.c
         tests/test_helpers.c
         tests/test_e2e_main.c
     )

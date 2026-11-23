@@ -42,9 +42,17 @@ typedef struct
     char *summary;  /* [owns] */
     int64_t size_bytes;
     char *indexed_at; /* [owns] */
+    int flags;        /* TT_FILE_FLAG_* (entry points: CGI, unauthenticated, script) */
 } tt_file_record_t;
 
 void tt_file_record_free(tt_file_record_t *r);
+
+/*
+ * tt_file_flags_json -- {"is_cgi","is_unauthenticated","is_script"} for a
+ * file with entry flags, or NULL when flags == 0. [caller-frees]
+ */
+struct cJSON;
+struct cJSON *tt_file_flags_json(int flags);
 
 /* ---- Search results ---- */
 
@@ -70,9 +78,11 @@ typedef struct
 {
     int files;
     int symbols;
-    tt_name_count_t *languages; /* [owns] */
+    tt_name_count_t *languages; /* [owns] files per language */
     int language_count;
-    tt_name_count_t *kinds; /* [owns] */
+    tt_name_count_t *symbol_languages; /* [owns] symbols per language */
+    int symbol_language_count;
+    tt_name_count_t *kinds; /* [owns] symbols per kind */
     int kind_count;
     tt_name_count_t *dirs; /* [owns] */
     int dir_count;
@@ -117,6 +127,12 @@ int tt_store_insert_file(tt_index_store_t *store, const char *path, const char *
                          const char *language, int64_t size_bytes,
                          int64_t mtime_sec, int64_t mtime_nsec,
                          const char *summary);
+
+/* Like tt_store_insert_file, with TT_FILE_FLAG_* bits (CGI, unauthenticated...). */
+int tt_store_insert_file_ex(tt_index_store_t *store, const char *path, const char *hash,
+                            const char *language, int64_t size_bytes,
+                            int64_t mtime_sec, int64_t mtime_nsec,
+                            const char *summary, int flags);
 
 int tt_store_insert_symbol(tt_index_store_t *store, const tt_symbol_t *sym);
 
@@ -216,6 +232,19 @@ int tt_store_update_file_metadata(tt_index_store_t *store,
 #include "import_extractor.h"
 
 int tt_store_insert_imports(tt_index_store_t *store, const tt_import_t *imps, int count);
+
+#include "site.h"
+
+/* Insert security sites (sinks, sources, sanitizers, ACL gates, calls). */
+int tt_store_insert_sites(tt_index_store_t *store, const tt_site_t *sites, int count);
+
+/*
+ * tt_store_apply_entry_flags -- Mark CGI files reachable before
+ * authentication (files.flags bit 2) from framework declarations recorded
+ * as harness sites (Webmin "unauthcgi" defaults in miniserv-lib.pl).
+ * Call after all files and sites are inserted.
+ */
+int tt_store_apply_entry_flags(tt_index_store_t *store);
 int tt_store_delete_imports_for_file(tt_index_store_t *store, const char *file_path);
 
 /*

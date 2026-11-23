@@ -6,6 +6,7 @@
  */
 
 #include "cmd_find.h"
+#include "symbol_kind.h"
 #include "json_output.h"
 #include "error.h"
 #include "platform.h"
@@ -55,6 +56,11 @@ static cJSON *format_imports(const tt_import_t *imps, int count,
             cJSON_AddStringToObject(obj, "symbol_name", imps[i].symbol_name);
         cJSON_AddNumberToObject(obj, "line", imps[i].line);
         cJSON_AddStringToObject(obj, "import_type", imps[i].import_type ? imps[i].import_type : "");
+        if (imps[i].dynamic) {
+            cJSON_AddBoolToObject(obj, "dynamic", true);
+            cJSON_AddNumberToObject(obj, "confidence",
+                                    (double)((int)(imps[i].confidence * 100.0 + 0.5)) / 100.0);
+        }
         if (importers_map && imps[i].from_file) {
             bool val = tt_hashmap_has(importers_map, imps[i].from_file);
             cJSON_AddBoolToObject(obj, "has_importers", val);
@@ -397,6 +403,14 @@ static bool kind_matches_filter(const char *kind, const char *filter)
         size_t len = (size_t)(end - p);
         if (len == strlen(kind) && strncasecmp(p, kind, len) == 0)
             return true;
+        char tok[32];
+        if (len < sizeof(tok))
+        {
+            memcpy(tok, p, len);
+            tok[len] = '\0';
+            if (tt_kind_filter_matches(tok, kind))
+                return true;
+        }
         p = *end ? end + 1 : end;
     }
     return false;
@@ -434,10 +448,15 @@ cJSON *tt_cmd_find_dead_exec(tt_cli_opts_t *opts)
     sqlite3 *sdb = db.db;
 
     /* Query 1: "dead" symbols — file has NO importers */
+    /* Symbols named by recorded call sites (Perl sites) are referenced. */
+#define NOT_CALLED                                                                \
+    "AND NOT EXISTS (SELECT 1 FROM sites st WHERE "                               \
+    "st.category IN ('call','sink','sanitizer','acl') AND st.name = s.name) "
     const char *sql_dead =
         "SELECT s.id, s.file, s.name, s.kind, s.line, s.language "
         "FROM symbols s "
         "WHERE s.file NOT IN (SELECT DISTINCT resolved_file FROM imports WHERE resolved_file != '') "
+        NOT_CALLED
         "ORDER BY s.file, s.line";
 
     /* Query 2: "unreferenced" symbols — file IS imported but symbol
@@ -452,7 +471,9 @@ cJSON *tt_cmd_find_dead_exec(tt_cli_opts_t *opts)
         "  SELECT DISTINCT kind FROM imports "
         "  WHERE kind != 'module' AND resolved_file = s.file"
         ") "
+        NOT_CALLED
         "ORDER BY s.file, s.line";
+#undef NOT_CALLED
 
     cJSON *results = cJSON_CreateArray();
     int dead_count = 0, unreferenced_count = 0;

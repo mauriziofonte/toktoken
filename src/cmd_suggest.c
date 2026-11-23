@@ -84,7 +84,7 @@ static cJSON *query_kind_distribution(sqlite3 *db)
 {
     cJSON *obj = cJSON_CreateObject();
     const char *sql =
-        "SELECT kind, COUNT(*) FROM symbols GROUP BY kind ORDER BY COUNT(*) DESC";
+        "SELECT kind, COUNT(*) FROM symbols GROUP BY kind ORDER BY COUNT(*) DESC, kind";
     sqlite3_stmt *stmt = NULL;
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK)
         return obj;
@@ -99,13 +99,13 @@ static cJSON *query_kind_distribution(sqlite3 *db)
     return obj;
 }
 
-/* Language distribution: count of files per language. */
+/* Language distribution: indexed files per language (same unit as stats.languages). */
 static cJSON *query_language_distribution(sqlite3 *db)
 {
     cJSON *obj = cJSON_CreateObject();
     const char *sql =
-        "SELECT language, COUNT(DISTINCT file) FROM symbols "
-        "GROUP BY language ORDER BY COUNT(DISTINCT file) DESC";
+        "SELECT language, COUNT(*) FROM files "
+        "GROUP BY language ORDER BY COUNT(*) DESC, language";
     sqlite3_stmt *stmt = NULL;
     if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK)
         return obj;
@@ -173,12 +173,18 @@ static cJSON *build_example_queries(cJSON *top_keywords, cJSON *kind_dist,
             cJSON_CreateString("search:symbols --kind class --limit 10"));
     }
 
-    /* Example 3: search for functions */
+    /* Example 3: search for functions (Perl-style subroutines count too) */
     cJSON *func_cnt = cJSON_GetObjectItem(kind_dist, "function");
+    cJSON *sub_cnt = cJSON_GetObjectItem(kind_dist, "subroutine");
     if (cJSON_IsNumber(func_cnt) && func_cnt->valueint > 0)
     {
         cJSON_AddItemToArray(arr,
             cJSON_CreateString("search:symbols --kind function --limit 10"));
+    }
+    if (cJSON_IsNumber(sub_cnt) && sub_cnt->valueint > 0)
+    {
+        cJSON_AddItemToArray(arr,
+            cJSON_CreateString("search:symbols --kind subroutine --limit 10"));
     }
 
     /* Example 4: inspect most-imported file */
@@ -245,6 +251,12 @@ cJSON *tt_cmd_suggest_exec(tt_cli_opts_t *opts)
 
     cJSON *examples = build_example_queries(keywords, kinds, imported);
     cJSON_AddItemToObject(result, "example_queries", examples);
+
+    cJSON *units = cJSON_CreateObject();
+    cJSON_AddStringToObject(units, "kind_distribution", "symbols");
+    cJSON_AddStringToObject(units, "language_distribution", "files");
+    cJSON_AddStringToObject(units, "most_imported_files", "importing files");
+    cJSON_AddItemToObject(result, "units", units);
 
     tt_database_close(&db);
     free(project_path);

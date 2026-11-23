@@ -17,6 +17,7 @@
 #include "mpsc-queue.h"
 #include "symbol.h"
 #include "import_extractor.h"
+#include "site.h"
 #include "database.h"
 #include "index_store.h"
 
@@ -33,6 +34,9 @@ typedef struct tt_symbol_batch
     int symbol_count;
     tt_import_t *imports;        /* [owns] array of imports, NULL if none */
     int import_count;
+    tt_site_t *sites;            /* [owns] security sites, NULL if none */
+    int site_count;
+    int *file_flags;             /* [owns] TT_FILE_FLAG_* (parallel to file_paths) */
     char **file_paths;           /* [owns] relative paths in this batch */
     char **file_hashes;          /* [owns] content hashes (parallel to file_paths) */
     char **file_languages;       /* [owns] language strings */

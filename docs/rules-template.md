@@ -39,6 +39,8 @@ file outlines and imports, which costs ~4x more tokens than inspect:symbol.
 - `find:dead --exclude-tests` -- "find unused code"
 - `search:text` -- grep for string literals, comments, config values
 - `suggest` -- first contact with unfamiliar codebase
+- `security:flow --entry unauth --taint in` -- "where can request data reach a command" (Perl/CGI)
+- `security:sinks <dir> --taint in --unsanitized` -- "which command/file sinks take user input" (Perl/CGI)
 
 **Anti-patterns (do NOT do these):**
 
@@ -53,7 +55,7 @@ file outlines and imports, which costs ~4x more tokens than inspect:symbol.
 Import graph tools (`inspect:blast`, `find:importers`, `find:callers`,
 `inspect:dependencies`) rely on explicit import statements.
 
-**Works well:** Python, JavaScript, TypeScript, PHP, Ruby, Java, C#, Go, Rust.
+**Works well:** Python, JavaScript, TypeScript, PHP, Ruby, Java, C#, Go, Rust, Perl (`require`/`do`/`use`, Webmin `foreign_require`).
 
 **Does NOT work:** C, C++ (`#include` not tracked as imports). On C/C++
 codebases, use `search:text` and `search:symbols` instead of import graph
@@ -88,6 +90,8 @@ Other flags: `--filter` (include path), `--group-by file` (text search),
 `inspect:tree`, `inspect:dependencies`.
 
 **Find:** `find:importers`, `find:references`, `find:callers`, `find:dead`.
+
+**Security (Perl/CGI):** `security:sinks`, `security:sources`, `security:sanitizers`, `security:acl-gates`, `security:flow`.
 
 **Index:** `index:update`, `index:file`, `index:create`.
 

@@ -10,7 +10,16 @@
 
 #include <sqlite3.h>
 
-#define TT_SCHEMA_VERSION 4
+#define TT_SCHEMA_VERSION 5
+
+/*
+ * Index content format. Bumped when the same source produces different
+ * symbol IDs or kinds (e.g. Perl subs: #variable -> #subroutine), so that
+ * stale indexes are rebuilt automatically instead of serving old IDs.
+ *   1 = up to 0.5.0 (no metadata key)
+ *   2 = Perl parser (subroutine kind, sites, dynamic imports)
+ */
+#define TT_INDEX_FORMAT 2
 
 /*
  * tt_schema_create -- Create all tables, indexes, triggers from scratch.
@@ -50,5 +59,11 @@ int tt_schema_create_secondary_indexes(sqlite3 *db);
 
 /* Rebuild FTS5 from symbols content table -- call after bulk indexing. */
 int tt_schema_rebuild_fts(sqlite3 *db);
+
+/*
+ * tt_schema_index_format -- Stored index content format (metadata
+ * 'index_format'); 1 when the key is absent, 0 when unreadable.
+ */
+int tt_schema_index_format(sqlite3 *db);
 
 #endif /* TT_SCHEMA_H */

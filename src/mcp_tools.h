@@ -1,7 +1,7 @@
 /*
  * mcp_tools.h -- MCP tool registration and execution bridge.
  *
- * Defines all 12 TokToken tools exposed via MCP, mapping each to
+ * Defines all 32 TokToken tools exposed via MCP, mapping each to
  * the corresponding tt_cmd_*_exec() core function.
  */
 

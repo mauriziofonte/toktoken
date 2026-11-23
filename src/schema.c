@@ -24,7 +24,8 @@ static const char *DDL_TABLES =
     "    size_bytes INTEGER NOT NULL,"
     "    mtime_sec INTEGER NOT NULL DEFAULT 0,"
     "    mtime_nsec INTEGER NOT NULL DEFAULT 0,"
-    "    indexed_at TEXT NOT NULL"
+    "    indexed_at TEXT NOT NULL,"
+    "    flags INTEGER NOT NULL DEFAULT 0"
     ");"
     "CREATE TABLE IF NOT EXISTS symbols ("
     "    id TEXT PRIMARY KEY,"
@@ -53,7 +54,10 @@ static const char *DDL_IMPORTS =
     "    target_name TEXT NOT NULL,"
     "    resolved_file TEXT NOT NULL DEFAULT '',"
     "    kind TEXT NOT NULL DEFAULT 'module',"
-    "    import_type TEXT NOT NULL DEFAULT 'import'"
+    "    import_type TEXT NOT NULL DEFAULT 'import',"
+    "    line INTEGER NOT NULL DEFAULT 0,"
+    "    dynamic INTEGER NOT NULL DEFAULT 0,"
+    "    confidence REAL NOT NULL DEFAULT 1.0"
     ");"
     "CREATE INDEX IF NOT EXISTS idx_imports_source ON imports(source_file);"
     "CREATE INDEX IF NOT EXISTS idx_imports_target ON imports(target_name);"
@@ -66,8 +70,25 @@ static const char *DDL_CENTRALITY =
     "    score REAL NOT NULL DEFAULT 0.0"
     ");";
 
+/* Security-relevant sites (v5). category: sink|source|sanitizer|acl|call|harness.
+ * scope_id = enclosing subroutine symbol ID ('' = file scope). */
+static const char *DDL_SITES =
+    "CREATE TABLE IF NOT EXISTS sites ("
+    "    id INTEGER PRIMARY KEY,"
+    "    file TEXT NOT NULL REFERENCES files(path) ON DELETE CASCADE,"
+    "    line INTEGER NOT NULL,"
+    "    category TEXT NOT NULL,"
+    "    name TEXT NOT NULL,"
+    "    qualifier TEXT NOT NULL DEFAULT '',"
+    "    scope_id TEXT NOT NULL DEFAULT '',"
+    "    args TEXT NOT NULL DEFAULT '',"
+    "    mask INTEGER NOT NULL DEFAULT 0,"
+    "    arg_masks TEXT NOT NULL DEFAULT '',"
+    "    trace TEXT NOT NULL DEFAULT ''"
+    ");";
+
 static const char *DDL_METADATA_INIT =
-    "INSERT OR IGNORE INTO metadata (key, value) VALUES ('schema_version', '4');"
+    "INSERT OR IGNORE INTO metadata (key, value) VALUES ('schema_version', '5');"
     "INSERT OR IGNORE INTO metadata (key, value) VALUES ('indexed_at', '');"
     "INSERT OR IGNORE INTO metadata (key, value) VALUES ('git_head', '');";
 
@@ -75,7 +96,10 @@ static const char *DDL_INDEXES =
     "CREATE INDEX IF NOT EXISTS idx_symbols_file_line ON symbols(file, line);"
     "CREATE INDEX IF NOT EXISTS idx_symbols_kind_lang ON symbols(kind, language);"
     "CREATE INDEX IF NOT EXISTS idx_symbols_parent ON symbols(parent_id);"
-    "CREATE INDEX IF NOT EXISTS idx_files_language ON files(language);";
+    "CREATE INDEX IF NOT EXISTS idx_files_language ON files(language);"
+    "CREATE INDEX IF NOT EXISTS idx_sites_file_line ON sites(file, line);"
+    "CREATE INDEX IF NOT EXISTS idx_sites_cat_name ON sites(category, name);"
+    "CREATE INDEX IF NOT EXISTS idx_sites_scope ON sites(scope_id);";
 
 static const char *DDL_FTS5 =
     "CREATE VIRTUAL TABLE IF NOT EXISTS symbols_fts USING fts5("
@@ -120,6 +144,8 @@ int tt_schema_create(sqlite3 *db)
     if (exec_sql(db, DDL_IMPORTS) < 0)
         return -1;
     if (exec_sql(db, DDL_CENTRALITY) < 0)
+        return -1;
+    if (exec_sql(db, DDL_SITES) < 0)
         return -1;
     if (exec_sql(db, DDL_METADATA_INIT) < 0)
         return -1;
@@ -179,7 +205,10 @@ int tt_schema_drop_secondary_indexes(sqlite3 *db)
         "DROP INDEX IF EXISTS idx_symbols_qualified;"
         "DROP INDEX IF EXISTS idx_symbols_kind_lang;"
         "DROP INDEX IF EXISTS idx_symbols_parent;"
-        "DROP INDEX IF EXISTS idx_files_language;");
+        "DROP INDEX IF EXISTS idx_files_language;"
+        "DROP INDEX IF EXISTS idx_sites_file_line;"
+        "DROP INDEX IF EXISTS idx_sites_cat_name;"
+        "DROP INDEX IF EXISTS idx_sites_scope;");
 }
 
 int tt_schema_create_secondary_indexes(sqlite3 *db)
@@ -230,5 +259,43 @@ int tt_schema_migrate(sqlite3 *db)
             return -1;
     }
 
+    if (version < 5)
+    {
+        /* v4 -> v5: file flags, import line/dynamic/confidence, sites table.
+         * Symbol IDs may change kind (Perl #variable -> #subroutine): the
+         * index_format metadata forces a full rebuild on next use. */
+        if (exec_sql(db,
+                "ALTER TABLE files ADD COLUMN flags INTEGER NOT NULL DEFAULT 0;"
+                "ALTER TABLE imports ADD COLUMN line INTEGER NOT NULL DEFAULT 0;"
+                "ALTER TABLE imports ADD COLUMN dynamic INTEGER NOT NULL DEFAULT 0;"
+                "ALTER TABLE imports ADD COLUMN confidence REAL NOT NULL DEFAULT 1.0;") < 0)
+            return -1;
+        if (exec_sql(db, DDL_SITES) < 0)
+            return -1;
+        if (exec_sql(db,
+                "CREATE INDEX IF NOT EXISTS idx_sites_file_line ON sites(file, line);"
+                "CREATE INDEX IF NOT EXISTS idx_sites_cat_name ON sites(category, name);"
+                "CREATE INDEX IF NOT EXISTS idx_sites_scope ON sites(scope_id);"
+                "INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', '5');") < 0)
+            return -1;
+    }
+
     return 0;
+}
+
+int tt_schema_index_format(sqlite3 *db)
+{
+    sqlite3_stmt *stmt = NULL;
+    if (sqlite3_prepare_v2(db, "SELECT value FROM metadata WHERE key = 'index_format'",
+                           -1, &stmt, NULL) != SQLITE_OK)
+        return 0;
+    int fmt = 1; /* indexes written before the key existed */
+    if (sqlite3_step(stmt) == SQLITE_ROW)
+    {
+        const char *val = (const char *)sqlite3_column_text(stmt, 0);
+        if (val)
+            fmt = atoi(val);
+    }
+    sqlite3_finalize(stmt);
+    return fmt;
 }

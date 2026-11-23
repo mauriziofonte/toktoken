@@ -60,6 +60,11 @@ By default, Windsurf prompts for approval each time an MCP tool is called. Ask t
                 "stats",
                 "projects_list",
                 "cache_clear",
+                "security_sinks",
+                "security_sources",
+                "security_sanitizers",
+                "security_acl_gates",
+                "security_flow",
                 "help"
             ]
         }

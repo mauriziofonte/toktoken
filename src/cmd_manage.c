@@ -12,11 +12,16 @@
 #include "config.h"
 #include "str_util.h"
 #include "token_savings.h"
+#include "file_filter.h"
+#include "language_detector.h"
+#include "cmd_index.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <dirent.h>
+#include <limits.h>
 #include <time.h>
 
 /* ---- Shared helpers ---- */
@@ -85,11 +90,18 @@ cJSON *tt_cmd_stats_exec(tt_cli_opts_t *opts)
     cJSON_AddNumberToObject(result, "files", stats.files);
     cJSON_AddNumberToObject(result, "symbols", stats.symbols);
 
-    /* languages: {name: count} */
+    /* languages: {name: files} */
     cJSON *langs = cJSON_CreateObject();
     for (int i = 0; i < stats.language_count; i++)
         cJSON_AddNumberToObject(langs, stats.languages[i].name, stats.languages[i].count);
     cJSON_AddItemToObject(result, "languages", langs);
+
+    /* symbols_by_language: {name: symbols} */
+    cJSON *sym_langs = cJSON_CreateObject();
+    for (int i = 0; i < stats.symbol_language_count; i++)
+        cJSON_AddNumberToObject(sym_langs, stats.symbol_languages[i].name,
+                                stats.symbol_languages[i].count);
+    cJSON_AddItemToObject(result, "symbols_by_language", sym_langs);
 
     /* kinds: {name: count} */
     cJSON *kinds = cJSON_CreateObject();
@@ -102,6 +114,34 @@ cJSON *tt_cmd_stats_exec(tt_cli_opts_t *opts)
     for (int i = 0; i < stats.dir_count; i++)
         cJSON_AddNumberToObject(dirs, stats.dirs[i].name, stats.dirs[i].count);
     cJSON_AddItemToObject(result, "dirs", dirs);
+
+    /* Entry points recorded by parsers (Perl/CGI): files with flags */
+    {
+        const char *ep_sql =
+            "SELECT SUM((flags & 1) != 0), SUM((flags & 2) != 0), SUM((flags & 4) != 0) "
+            "FROM files WHERE flags != 0";
+        sqlite3_stmt *ep = NULL;
+        if (sqlite3_prepare_v2(store.db->db, ep_sql, -1, &ep, NULL) == SQLITE_OK)
+        {
+            if (sqlite3_step(ep) == SQLITE_ROW && sqlite3_column_type(ep, 0) != SQLITE_NULL)
+            {
+                cJSON *eps = cJSON_CreateObject();
+                cJSON_AddNumberToObject(eps, "cgi", sqlite3_column_int(ep, 0));
+                cJSON_AddNumberToObject(eps, "unauthenticated", sqlite3_column_int(ep, 1));
+                cJSON_AddNumberToObject(eps, "script", sqlite3_column_int(ep, 2));
+                cJSON_AddItemToObject(result, "entry_points", eps);
+            }
+            sqlite3_finalize(ep);
+        }
+    }
+
+    cJSON *units = cJSON_CreateObject();
+    cJSON_AddStringToObject(units, "languages", "files");
+    cJSON_AddStringToObject(units, "symbols_by_language", "symbols");
+    cJSON_AddStringToObject(units, "kinds", "symbols");
+    cJSON_AddStringToObject(units, "dirs", "files");
+    cJSON_AddStringToObject(units, "entry_points", "files");
+    cJSON_AddItemToObject(result, "units", units);
 
     /* most_imported_files: top 10 files by importer count */
     {
@@ -234,14 +274,14 @@ int tt_cmd_stats(tt_cli_opts_t *opts)
         printf("Symbols: %d\n", symbols);
         printf("\n");
 
-        printf("Languages:\n");
+        printf("Languages (files):\n");
         cJSON *langs = cJSON_GetObjectItemCaseSensitive(result, "languages");
         cJSON *el;
         cJSON_ArrayForEach(el, langs)
             printf("  %s: %d\n", el->string, el->valueint);
 
         printf("\n");
-        printf("Symbol kinds:\n");
+        printf("Symbol kinds (symbols):\n");
         cJSON *kinds = cJSON_GetObjectItemCaseSensitive(result, "kinds");
         cJSON_ArrayForEach(el, kinds)
             printf("  %s: %d\n", el->string, el->valueint);
@@ -648,7 +688,7 @@ int tt_cmd_cache_clear(tt_cli_opts_t *opts)
 
 /* ---- codebase:detect ---- */
 
-/* Manifest basenames -> ecosystem (21 entries) */
+/* Manifest basenames -> ecosystem (27 entries) */
 static const struct
 {
     const char *file;
@@ -675,6 +715,12 @@ static const struct
     {"build.sbt", "scala"},
     {"build.zig", "zig"},
     {"flake.nix", "nix"},
+    {"Makefile.PL", "perl"},
+    {"Build.PL", "perl"},
+    {"cpanfile", "perl"},
+    {"META.json", "perl"},
+    {"META.yml", "perl"},
+    {"dist.ini", "perl"},
 };
 #define MANIFEST_COUNT (sizeof(MANIFESTS) / sizeof(MANIFESTS[0]))
 
@@ -726,6 +772,7 @@ static const char *SOURCE_EXT_SET[] = {
     "lua",
     "pl",
     "pm",
+    "cgi",
     "sh",
     "bash",
     "zsh",
@@ -806,8 +853,41 @@ static void add_ecosystem(tt_hashmap_t *set, const char *ecosystem)
         tt_hashmap_set(set, ecosystem, (void *)1);
 }
 
+/* Manifest scan state: ecosystems set + found manifest files (relative paths). */
+typedef struct
+{
+    const char *root;
+    tt_hashmap_t *ecosystems;
+    cJSON *found; /* array of {"file","ecosystem"} */
+} manifest_scan_t;
+
+static void record_manifest(manifest_scan_t *ms, const char *dir, const char *file,
+                            const char *ecosystem)
+{
+    add_ecosystem(ms->ecosystems, ecosystem);
+    if (!ms->found)
+        return;
+    size_t rlen = strlen(ms->root);
+    const char *rel_dir = "";
+    if (strncmp(dir, ms->root, rlen) == 0 && dir[rlen] == '/')
+        rel_dir = dir + rlen + 1;
+    char *rel = rel_dir[0] ? tt_path_join(rel_dir, file) : tt_strdup(file);
+    if (!rel)
+        return;
+    cJSON *m = cJSON_CreateObject();
+    cJSON_AddStringToObject(m, "file", rel);
+    cJSON_AddStringToObject(m, "ecosystem", ecosystem);
+    cJSON_AddItemToArray(ms->found, m);
+    free(rel);
+}
+
+static int cmp_cstr(const void *a, const void *b)
+{
+    return strcmp(*(const char *const *)a, *(const char *const *)b);
+}
+
 /* Scan a single directory for manifest files */
-static void scan_manifests_in_dir(const char *dir, tt_hashmap_t *ecosystems)
+static void scan_manifests_in_dir(const char *dir, manifest_scan_t *ms)
 {
     /* Fixed-name manifests: direct stat */
     for (size_t i = 0; i < MANIFEST_COUNT; i++)
@@ -816,18 +896,20 @@ static void scan_manifests_in_dir(const char *dir, tt_hashmap_t *ecosystems)
         if (full)
         {
             if (tt_file_exists(full))
-                add_ecosystem(ecosystems, MANIFESTS[i].ecosystem);
+                record_manifest(ms, dir, MANIFESTS[i].file, MANIFESTS[i].ecosystem);
             free(full);
         }
     }
 
-    /* Extension-based manifests: scandir */
+    /* Extension-based manifests: scandir (names sorted for deterministic output) */
     DIR *dp = opendir(dir);
     if (!dp)
         return;
 
+    char *names[256];
+    int nnames = 0;
     struct dirent *de;
-    while ((de = readdir(dp)) != NULL)
+    while ((de = readdir(dp)) != NULL && nnames < 256)
     {
         if (de->d_name[0] == '.')
             continue;
@@ -835,26 +917,45 @@ static void scan_manifests_in_dir(const char *dir, tt_hashmap_t *ecosystems)
         {
             if (tt_str_ends_with(de->d_name, MANIFEST_EXTENSIONS[i].ext))
             {
-                char *full = tt_path_join(dir, de->d_name);
-                if (full)
-                {
-                    if (!tt_is_dir(full))
-                        add_ecosystem(ecosystems, MANIFEST_EXTENSIONS[i].ecosystem);
-                    free(full);
-                }
+                names[nnames++] = tt_strdup(de->d_name);
+                break;
             }
         }
     }
     closedir(dp);
+
+    qsort(names, (size_t)nnames, sizeof(char *), cmp_cstr);
+    for (int n = 0; n < nnames; n++)
+    {
+        for (size_t i = 0; names[n] && i < MANIFEST_EXT_COUNT; i++)
+        {
+            if (tt_str_ends_with(names[n], MANIFEST_EXTENSIONS[i].ext))
+            {
+                char *full = tt_path_join(dir, names[n]);
+                if (full)
+                {
+                    if (!tt_is_dir(full))
+                        record_manifest(ms, dir, names[n], MANIFEST_EXTENSIONS[i].ecosystem);
+                    free(full);
+                }
+                break;
+            }
+        }
+        free(names[n]);
+    }
 }
 
 /* Recursive manifest scan with depth limit and early exit */
-static void scan_manifests_recursive(const char *dir, tt_hashmap_t *ecosystems, int depth)
+static void scan_manifests_recursive(const char *dir, manifest_scan_t *ms, int depth)
 {
     DIR *dp = opendir(dir);
     if (!dp)
         return;
 
+    /* Collect subdirectory names, sorted: the first match wins, so the
+     * visiting order must not depend on readdir(). */
+    tt_array_t subs;
+    tt_array_init(&subs);
     struct dirent *de;
     while ((de = readdir(dp)) != NULL)
     {
@@ -862,39 +963,32 @@ static void scan_manifests_recursive(const char *dir, tt_hashmap_t *ecosystems, 
             continue;
         if (is_skip_dir(de->d_name))
             continue;
+        tt_array_push(&subs, tt_strdup(de->d_name));
+    }
+    closedir(dp);
+    if (subs.len > 1)
+        qsort(subs.items, subs.len, sizeof(char *), cmp_cstr);
 
-        char *subdir = tt_path_join(dir, de->d_name);
+    bool found = false;
+    for (size_t i = 0; i < subs.len && !found; i++)
+    {
+        char *subdir = tt_path_join(dir, (const char *)subs.items[i]);
         if (!subdir)
             continue;
 
-        if (!tt_is_dir(subdir))
+        if (tt_is_dir(subdir))
         {
-            free(subdir);
-            continue;
-        }
-
-        scan_manifests_in_dir(subdir, ecosystems);
-        if (tt_hashmap_count(ecosystems) > 0)
-        {
-            free(subdir);
-            closedir(dp);
-            return;
-        }
-
-        if (depth < MANIFEST_SCAN_DEPTH)
-        {
-            scan_manifests_recursive(subdir, ecosystems, depth + 1);
-            if (tt_hashmap_count(ecosystems) > 0)
+            scan_manifests_in_dir(subdir, ms);
+            found = tt_hashmap_count(ms->ecosystems) > 0;
+            if (!found && depth < MANIFEST_SCAN_DEPTH)
             {
-                free(subdir);
-                closedir(dp);
-                return;
+                scan_manifests_recursive(subdir, ms, depth + 1);
+                found = tt_hashmap_count(ms->ecosystems) > 0;
             }
         }
-
         free(subdir);
     }
-    closedir(dp);
+    tt_array_free_items(&subs);
 }
 
 /* Count source files recursively with early exit at threshold */
@@ -951,13 +1045,281 @@ static int count_source_files(const char *dir, int count)
     return count;
 }
 
-/* Callback for hashmap iteration: collect ecosystem names */
-static int collect_ecosystems_cb(const char *key, void *value, void *userdata)
+/* ---- Language census ---- */
+
+/*
+ * Bounded walk counting code files per detected language. Uses the indexing
+ * filter's skip dirs and source extensions (smart filter on), and skips test
+ * directories, symlinks, empty files and translation data files, so that the
+ * primary/secondary languages describe the project's own code.
+ */
+#define CENSUS_MAX_FILES 50000
+#define CENSUS_MAX_LANGS 64
+#define CENSUS_SECONDARY_MIN_FILES 5
+#define CENSUS_SECONDARY_MAX 5
+#define CENSUS_LANGUAGES_MAX 10
+
+static const char *CENSUS_TEST_DIRS[] = {"t", "test", "tests", "testing", "spec", "specs",
+                                         "__tests__", "fixtures", "testdata", NULL};
+
+/* Two-letter code extensions that are also ISO 639-1 language codes, used as
+ * translation suffixes (module.info.cs = Czech, config.info.el = Greek). */
+static const char *CENSUS_ISO_EXTS[] = {"pl", "sv", "cs", "el", "ml", "ts", "sc", "gd", NULL};
+
+/* Language -> package ecosystem (vocabulary of MANIFESTS). */
+static const struct
+{
+    const char *lang;
+    const char *ecosystem;
+} LANG_ECOSYSTEMS[] = {
+    {"perl", "perl"},     {"php", "php"},         {"javascript", "node"}, {"typescript", "node"},
+    {"vue", "node"},      {"python", "python"},   {"ruby", "ruby"},       {"go", "go"},
+    {"rust", "rust"},     {"java", "java"},       {"kotlin", "kotlin"},   {"c", "c/cpp"},
+    {"cpp", "c/cpp"},     {"csharp", "dotnet"},   {"elixir", "elixir"},   {"dart", "dart"},
+    {"haskell", "haskell"}, {"scala", "scala"},   {"nix", "nix"},
+};
+
+typedef struct
+{
+    const char *lang; /* static string from tt_detect_language */
+    int files;
+} census_entry_t;
+
+typedef struct
+{
+    const char *root;
+    tt_file_filter_t *ff;
+    census_entry_t langs[CENSUS_MAX_LANGS];
+    int nlangs;
+    int code_files;
+    int visited;
+    bool truncated;
+} census_ctx_t;
+
+static bool census_is_test_dir(const char *name)
+{
+    for (const char **p = CENSUS_TEST_DIRS; *p; p++)
+    {
+        if (tt_strcasecmp(name, *p) == 0)
+            return true;
+    }
+    return false;
+}
+
+static bool census_is_doc_lang(const char *lang)
+{
+    return strcmp(lang, "markdown") == 0 || strcmp(lang, "html") == 0 || strcmp(lang, "css") == 0 ||
+           strcmp(lang, "xml") == 0 || strcmp(lang, "yaml") == 0 || strcmp(lang, "toml") == 0;
+}
+
+/* name.<lang>.<iso-ext> holding key=value lines (or nothing): data, not code. */
+static bool census_is_translation(const char *full, const char *name, const char *ext)
+{
+    bool iso = false;
+    for (const char **p = CENSUS_ISO_EXTS; *p; p++)
+    {
+        if (strcmp(ext, *p) == 0)
+        {
+            iso = true;
+            break;
+        }
+    }
+    if (!iso)
+        return false;
+    const char *first = strchr(name, '.');
+    const char *last = strrchr(name, '.');
+    if (strcmp(ext, "pl") != 0 && strcmp(ext, "sv") != 0 && first == last)
+        return false; /* single extension: an ordinary source file */
+    return tt_file_looks_like_properties(full);
+}
+
+static int census_count_file(census_ctx_t *c, const char *full, const char *rel, const char *name);
+
+static int census_walk_cb(const char *dir, const char *name, bool is_dir, bool is_symlink,
+                          void *userdata)
+{
+    census_ctx_t *c = userdata;
+    if (tt_interrupted)
+        return -1;
+    if (name[0] == '.')
+        return is_dir ? 1 : 0;
+    if (is_symlink)
+        return is_dir ? 1 : 0; /* in-tree aliases would be counted twice */
+
+    char *full = tt_path_join(dir, name);
+    if (!full)
+        return 0;
+    size_t rlen = strlen(c->root);
+    const char *rel = (strncmp(full, c->root, rlen) == 0 && full[rlen] == '/') ? full + rlen + 1 : name;
+
+    if (is_dir)
+    {
+        int rc = 0;
+        if (tt_hashmap_has(c->ff->skip_dirs, name) || census_is_test_dir(name) ||
+            tt_file_filter_is_gitignored(c->ff, rel))
+            rc = 1;
+        else
+            tt_file_filter_load_gitignore(c->ff, full, c->root);
+        free(full);
+        return rc;
+    }
+
+    if (c->visited >= CENSUS_MAX_FILES)
+    {
+        c->truncated = true;
+        free(full);
+        return -1;
+    }
+    c->visited++;
+    int rc = census_count_file(c, full, rel, name);
+    free(full);
+    return rc;
+}
+
+static int census_count_file(census_ctx_t *c, const char *full, const char *rel, const char *name)
+{
+
+    const char *dot = strrchr(name, '.');
+    if (!dot || !dot[1])
+        return 0;
+    char ext[32];
+    size_t el = strlen(dot + 1);
+    if (el >= sizeof(ext))
+        return 0;
+    for (size_t i = 0; i <= el; i++)
+        ext[i] = (char)tolower((unsigned char)dot[1 + i]);
+    if (!tt_hashmap_has(c->ff->source_ext, ext) || tt_hashmap_has(c->ff->binary_ext, ext))
+        return 0;
+
+    const char *lang = tt_detect_language(name);
+    if (!lang || census_is_doc_lang(lang))
+        return 0;
+
+    if (tt_file_filter_is_gitignored(c->ff, rel) || tt_file_size(full) <= 0 ||
+        census_is_translation(full, name, ext))
+        return 0;
+
+    int k;
+    for (k = 0; k < c->nlangs; k++)
+    {
+        if (strcmp(c->langs[k].lang, lang) == 0)
+            break;
+    }
+    if (k == c->nlangs)
+    {
+        if (c->nlangs >= CENSUS_MAX_LANGS)
+            return 0;
+        c->langs[k].lang = lang;
+        c->langs[k].files = 0;
+        c->nlangs++;
+    }
+    c->langs[k].files++;
+    c->code_files++;
+    return 0;
+}
+
+static int census_cmp(const void *a, const void *b)
+{
+    const census_entry_t *x = a, *y = b;
+    if (x->files != y->files)
+        return y->files - x->files;
+    return strcmp(x->lang, y->lang);
+}
+
+static void run_census(const char *root, census_ctx_t *c)
+{
+    memset(c, 0, sizeof(*c));
+    c->root = root;
+    tt_file_filter_t ff;
+    if (tt_file_filter_init(&ff, 0, NULL, true, NULL) < 0)
+        return;
+    c->ff = &ff;
+    tt_file_filter_load_gitignore(&ff, root, root);
+    tt_walk_dir(root, census_walk_cb, c);
+    c->ff = NULL;
+    tt_file_filter_free(&ff);
+    if (c->nlangs > 1)
+        qsort(c->langs, (size_t)c->nlangs, sizeof(census_entry_t), census_cmp);
+}
+
+static const char *ecosystem_of_lang(const char *lang)
+{
+    for (size_t i = 0; i < sizeof(LANG_ECOSYSTEMS) / sizeof(LANG_ECOSYSTEMS[0]); i++)
+    {
+        if (strcmp(LANG_ECOSYSTEMS[i].lang, lang) == 0)
+            return LANG_ECOSYSTEMS[i].ecosystem;
+    }
+    return NULL;
+}
+
+/* Rank of an ecosystem in the census (index of its first language), or INT_MAX. */
+static int ecosystem_rank(const census_ctx_t *c, const char *eco)
+{
+    for (int k = 0; k < c->nlangs; k++)
+    {
+        const char *e = ecosystem_of_lang(c->langs[k].lang);
+        if (e && strcmp(e, eco) == 0)
+            return k;
+    }
+    return INT_MAX;
+}
+
+typedef struct
+{
+    const char *name;
+    int rank;
+} eco_rank_t;
+
+static int collect_eco_cb(const char *key, void *value, void *userdata)
 {
     (void)value;
-    cJSON *arr = (cJSON *)userdata;
-    cJSON_AddItemToArray(arr, cJSON_CreateString(key));
+    tt_array_t *arr = userdata;
+    tt_array_push(arr, (void *)key);
     return 0;
+}
+
+static int eco_rank_cmp(const void *a, const void *b)
+{
+    const eco_rank_t *x = a, *y = b;
+    if (x->rank != y->rank)
+        return x->rank < y->rank ? -1 : 1;
+    return strcmp(x->name, y->name);
+}
+
+/*
+ * Ordered ecosystems: the primary language's ecosystem first (even without a
+ * manifest), then manifest ecosystems by census rank, unranked ones by name.
+ */
+static cJSON *build_ecosystems(const census_ctx_t *c, tt_hashmap_t *manifest_ecos)
+{
+    cJSON *arr = cJSON_CreateArray();
+    const char *primary_eco = c->nlangs > 0 ? ecosystem_of_lang(c->langs[0].lang) : NULL;
+    if (primary_eco)
+        cJSON_AddItemToArray(arr, cJSON_CreateString(primary_eco));
+
+    tt_array_t keys;
+    tt_array_init(&keys);
+    tt_hashmap_iter(manifest_ecos, collect_eco_cb, &keys);
+    size_t n = keys.len;
+    eco_rank_t *ranks = calloc(n ? n : 1, sizeof(eco_rank_t));
+    if (ranks)
+    {
+        for (size_t i = 0; i < n; i++)
+        {
+            ranks[i].name = (const char *)keys.items[i];
+            ranks[i].rank = ecosystem_rank(c, ranks[i].name);
+        }
+        qsort(ranks, n, sizeof(eco_rank_t), eco_rank_cmp);
+        for (size_t i = 0; i < n; i++)
+        {
+            if (primary_eco && strcmp(ranks[i].name, primary_eco) == 0)
+                continue;
+            cJSON_AddItemToArray(arr, cJSON_CreateString(ranks[i].name));
+        }
+        free(ranks);
+    }
+    tt_array_free(&keys);
+    return arr;
 }
 
 cJSON *tt_cmd_codebase_detect_exec(tt_cli_opts_t *opts, int *out_exit_code)
@@ -986,10 +1348,12 @@ cJSON *tt_cmd_codebase_detect_exec(tt_cli_opts_t *opts, int *out_exit_code)
     }
 
     tt_hashmap_t *ecosystems = tt_hashmap_new(16);
+    cJSON *manifests = cJSON_CreateArray();
+    manifest_scan_t ms = {path, ecosystems, manifests};
     const char *detection = "none";
 
     /* Phase 1: Root-level manifest check */
-    scan_manifests_in_dir(path, ecosystems);
+    scan_manifests_in_dir(path, &ms);
     if (tt_hashmap_count(ecosystems) > 0)
     {
         detection = "manifest-root";
@@ -997,7 +1361,7 @@ cJSON *tt_cmd_codebase_detect_exec(tt_cli_opts_t *opts, int *out_exit_code)
     else
     {
         /* Phase 2: Depth-limited recursive scan */
-        scan_manifests_recursive(path, ecosystems, 1);
+        scan_manifests_recursive(path, &ms, 1);
         if (tt_hashmap_count(ecosystems) > 0)
         {
             detection = "manifest-subdir";
@@ -1022,17 +1386,50 @@ cJSON *tt_cmd_codebase_detect_exec(tt_cli_opts_t *opts, int *out_exit_code)
     bool is_codebase = (strcmp(detection, "none") != 0);
     bool has_index = tt_database_exists(path);
 
+    census_ctx_t census;
+    run_census(path, &census);
+
     /* Build output */
     cJSON *result = cJSON_CreateObject();
     cJSON_AddBoolToObject(result, "is_codebase", is_codebase);
 
-    /* ecosystems: array of unique names */
-    cJSON *eco_arr = cJSON_CreateArray();
-    tt_hashmap_iter(ecosystems, collect_ecosystems_cb, eco_arr);
-    cJSON_AddItemToObject(result, "ecosystems", eco_arr);
+    /* ecosystems: primary language first, then manifest ecosystems by census rank */
+    cJSON_AddItemToObject(result, "ecosystems", build_ecosystems(&census, ecosystems));
 
     cJSON_AddBoolToObject(result, "has_index", has_index);
     cJSON_AddStringToObject(result, "detection", detection);
+
+    /* Language census: files per language (code only, tests/vendor/data excluded) */
+    if (census.nlangs > 0)
+        cJSON_AddStringToObject(result, "primary", census.langs[0].lang);
+    else
+        cJSON_AddNullToObject(result, "primary");
+    cJSON *secondary = cJSON_CreateArray();
+    for (int k = 1, n = 0; k < census.nlangs && n < CENSUS_SECONDARY_MAX; k++)
+    {
+        if (census.langs[k].files < CENSUS_SECONDARY_MIN_FILES)
+            break;
+        cJSON_AddItemToArray(secondary, cJSON_CreateString(census.langs[k].lang));
+        n++;
+    }
+    cJSON_AddItemToObject(result, "secondary", secondary);
+    cJSON *langs = cJSON_CreateArray();
+    for (int k = 0; k < census.nlangs && k < CENSUS_LANGUAGES_MAX; k++)
+    {
+        cJSON *e = cJSON_CreateObject();
+        cJSON_AddStringToObject(e, "language", census.langs[k].lang);
+        cJSON_AddNumberToObject(e, "files", census.langs[k].files);
+        cJSON_AddItemToArray(langs, e);
+    }
+    cJSON_AddItemToObject(result, "languages", langs);
+    cJSON *cmeta = cJSON_CreateObject();
+    cJSON_AddStringToObject(cmeta, "unit", "files");
+    cJSON_AddNumberToObject(cmeta, "code_files", census.code_files);
+    cJSON_AddBoolToObject(cmeta, "truncated", census.truncated);
+    cJSON_AddItemToObject(result, "census", cmeta);
+
+    /* Manifest files found by the detection scan (kept apart from the census) */
+    cJSON_AddItemToObject(result, "manifests", manifests);
 
     /* action */
     if (is_codebase && !has_index)

@@ -49,6 +49,8 @@ static void add_import(tt_import_t **arr, int *count, int *cap,
     imp->symbol_name = symbol_name ? tt_strdup(symbol_name) : NULL;
     imp->line = line;
     imp->import_type = tt_strdup(import_type);
+    imp->dynamic = 0;
+    imp->confidence = 0.0;
     (*count)++;
 }
 

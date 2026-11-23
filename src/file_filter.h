@@ -127,4 +127,11 @@ int tt_discover_paths(const char *root, tt_file_filter_t *ff,
  */
 void tt_discovered_paths_free(tt_discovered_paths_t *dp);
 
+/*
+ * tt_file_looks_like_properties -- True when the head of the file is a
+ * key=value listing (translation/config data behind a code-like extension,
+ * e.g. Webmin module.info.pl, config.info.cs). Empty files return false.
+ */
+bool tt_file_looks_like_properties(const char *full_path);
+
 #endif /* TT_FILE_FILTER_H */

@@ -215,6 +215,7 @@ int tt_apply_sync_summaries(tt_database_t *db)
             "WHEN 'trait'     THEN 'Trait ' || name "
             "WHEN 'enum'      THEN 'Enum ' || name "
             "WHEN 'function'  THEN 'Function ' || name "
+            "WHEN 'subroutine' THEN 'Subroutine ' || name "
             "WHEN 'method'    THEN 'Method ' || name "
             "WHEN 'constant'  THEN 'Constant ' || name "
             "WHEN 'property'  THEN 'Property ' || name "

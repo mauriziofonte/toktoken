@@ -38,6 +38,7 @@ Symbol Scorer / Text Search
 | `cmd_find.c` | `find:importers`, `find:references`, `find:callers`, `find:dead` |
 | `cmd_github.c` | `index:github` |
 | `cmd_manage.c` | `stats`, `projects:list`, `cache:clear`, `codebase:detect` |
+| `cmd_security.c` | `security:sinks`, `security:sources`, `security:sanitizers`, `security:acl-gates`, `security:flow` |
 | `cmd_suggest.c` | `suggest` |
 | `cmd_help.c` | `help` |
 | `cmd_serve.c` | `serve` (MCP server) |
@@ -53,7 +54,8 @@ Symbol Scorer / Text Search
 
 1. **File discovery** (`file_filter.c`): walks the project directory, applies gitignore rules, security filters, smart filter (non-code exclusion + vendor detection), and file size limits.
 2. **Language detection** (`language_detector.c`): maps file extensions to languages. Supports custom mappings via config.
-3. **Symbol extraction**: dispatches to universal-ctags (`ctags_resolver.c` / `ctags_stream.c`) or one of 15 custom parsers (`parser_*.c`) based on language.
+3. **Symbol extraction**: dispatches to universal-ctags (`ctags_resolver.c` / `ctags_stream.c`) or one of the custom parsers (`parser_*.c`) based on language. Perl files (`.pl`, `.pm`, `.cgi`, `.psgi`) bypass ctags: `parser_perl.c` produces symbols, imports, security sites (`site.h`) and entry-point flags in one pass, and the pipeline batches carry them to the writer.
+   Before extraction, `cmd_index.c` applies the language focus: `--languages` / config `languages`, or the Perl profile when Perl is at least 50% of the code files.
 4. **Source analysis** (`source_analyzer.c`): extracts docstrings, signatures, byte offsets, and content hashes.
 5. **Summarization** (`summarizer.c`): generates one-line summaries from signatures and docstrings.
 6. **Storage** (`index_store.c`): inserts files, symbols, and imports into SQLite. FTS5 index is kept in sync via triggers.
@@ -149,24 +151,27 @@ SQLite is opened with 6 PRAGMAs: `journal_mode=WAL` (concurrent reads), `foreign
 
 ### Schema
 
-Current schema version: **4**. Tables:
+Current schema version: **5**. Tables:
 
 | Table | Purpose |
 | ----- | ------- |
-| `metadata` | Key-value store (schema_version, indexed_at, git_head, include_dirs) |
-| `files` | Indexed files with path, hash, language, size |
+| `metadata` | Key-value store (schema_version, index_format, indexed_at, git_head, include_dirs, language_focus) |
+| `files` | Indexed files with path, hash, language, size, entry flags (v5: CGI, unauthenticated, script) |
 | `symbols` | Extracted symbols with name, kind, signature, byte offsets |
-| `imports` | Import/include relationships between files |
+| `imports` | Import/include relationships between files; v5 adds line, `dynamic`, `confidence` |
+| `sites` | Security sites (v5): sink, source, sanitizer, acl, call, harness; scope (enclosing sub ID), raw argument text, origin mask, per-argument masks, witness trace |
 | `symbols_fts` | FTS5 virtual table for full-text search on symbols |
 | `file_centrality` | Import-graph centrality scores per file (v4) |
 | `savings_totals` | Cumulative token savings metrics |
 | `savings_per_tool` | Per-tool token savings breakdown (v4) |
 
-The migration backbone in `schema.c` supports schema upgrades via sequential `if (version < N)` checks. The v2→v3 migration removed 4 redundant B-tree indexes. The v3→v4 migration added the `file_centrality` table for import-graph-based ranking in search results.
+The migration backbone in `schema.c` supports schema upgrades via sequential `if (version < N)` checks. The v2→v3 migration removed 4 redundant B-tree indexes. The v3→v4 migration added the `file_centrality` table for import-graph-based ranking in search results. The v4→v5 migration added file flags, import line/dynamic/confidence and the `sites` table.
+
+Schema version covers the table layout; `index_format` (metadata, `TT_INDEX_FORMAT` in `schema.h`) covers the content. When the same source would now produce different symbol IDs or kinds (format 2: Perl subs are `#subroutine`, sites and dynamic imports exist), `tt_index_ensure_format` truncates and rebuilds the index before the first query (CLI `main.c`, MCP `mcp_server.c`) and `index:update` does the same, so stale IDs are never served.
 
 ### Indexes
 
-Schema v4 maintains 3 B-tree indexes on `symbols`, 1 on `files`, and 4 on `imports`:
+Schema v5 maintains 3 B-tree indexes on `symbols`, 1 on `files`, 4 on `imports` and 3 on `sites`:
 
 | Index | Columns | Used by |
 | ----- | ------- | ------- |
@@ -178,6 +183,9 @@ Schema v4 maintains 3 B-tree indexes on `symbols`, 1 on `files`, and 4 on `impor
 | `idx_imports_target` | (target_name) | find:importers, inspect:dependencies, find:callers |
 | `idx_imports_resolved` | (resolved_file) | inspect:cycles, inspect:blast, centrality computation |
 | `idx_imports_kind` | (kind) | find:references |
+| `idx_sites_file_line` | (file, line) | security listings |
+| `idx_sites_cat_name` | (category, name) | security listings, search:symbols references, find:dead |
+| `idx_sites_scope` | (scope_id) | security:flow |
 
 During bulk insert (`index:create`), secondary indexes are dropped and rebuilt after all data is inserted. This avoids incremental B-tree maintenance during high-throughput writes.
 
@@ -247,7 +255,17 @@ Results are scored in-memory by `tt_score_symbol()` in `symbol_scorer.c` using n
 
 ### Text Search
 
-`search:text` tries ripgrep first (if available), falls back to a manual line-by-line search of indexed file content.
+`search:text` scans indexed file content in-process. Literal queries use substring matching; `--regex` uses POSIX extended regular expressions (`regex.h`, `REG_NEWLINE`, grep -E semantics) where the platform has them (`TT_HAVE_POSIX_REGEX`, detected by CMake). On platforms without `regex.h` (MinGW) regex queries go through ripgrep (`-e PATTERN`, file chunks as positional arguments, results sorted). The result cap is `--max` (default 100, hard cap 20000).
+
+### Security Queries
+
+`cmd_security.c` reads the `sites` table. Listings join `files` for entry flags and are ordered by file, line, name. `security:flow` loads sinks, calls with argument masks, sources, Perl subs and resolved import edges, then:
+
+1. **Hop 0**: a sink whose argument mask carries source bits.
+2. **Hop n**: a call passing a source (or, inside a callee, a tainted parameter) as argument *i* reaches the callee's parameter *i*; sinks whose mask carries that parameter close the chain. Per-callee summaries are memoized on (scope, parameter, remaining depth), with cycles cut and at most 32 chains per summary.
+3. **Callee resolution**: same file, then the import closure (breadth-first, depth 4), then the Webmin module library (`<mod>/<mod>-lib.pl`) or package-qualified name, then a unique global name. Unresolved tainted calls are reported as `unknown`. Calls that are themselves sinks or sanitizers are terminal.
+
+Masks are computed by the parser per scope (flow-insensitive, field-insensitive); flows are review candidates, not proofs.
 
 ---
 

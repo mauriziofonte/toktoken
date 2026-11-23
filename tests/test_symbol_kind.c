@@ -102,8 +102,9 @@ TT_TEST(test_symbol_kind_to_str_stable_values)
     const char *expected[] = {
         "class", "interface", "trait", "enum", "function", "method",
         "constant", "property", "variable", "namespace", "type", "directive",
-        "chapter", "section", "subsection"
+        "chapter", "section", "subsection", "subroutine"
     };
+    TT_ASSERT_EQ_INT((int)(sizeof(expected) / sizeof(expected[0])), TT_KIND_COUNT);
     for (int i = 0; i < TT_KIND_COUNT; i++) {
         TT_ASSERT_EQ_STR(expected[i], tt_kind_to_str((tt_symbol_kind_e)i));
     }
@@ -183,9 +184,28 @@ TT_TEST(test_symbol_kind_doc_kinds_are_valid)
     TT_ASSERT_FALSE(tt_kind_is_valid("l5subsection"));
 }
 
-TT_TEST(test_symbol_kind_count_is_15)
+TT_TEST(test_symbol_kind_subroutine)
 {
-    TT_ASSERT_EQ_INT(15, TT_KIND_COUNT);
+    TT_ASSERT_EQ_INT(TT_KIND_SUBROUTINE, tt_kind_from_ctags("subroutine"));
+    TT_ASSERT_EQ_STR("subroutine", tt_kind_to_str(TT_KIND_SUBROUTINE));
+    TT_ASSERT_EQ_STR("Subroutine", tt_kind_label(TT_KIND_SUBROUTINE));
+    TT_ASSERT_TRUE(tt_kind_is_valid("subroutine"));
+    TT_ASSERT_FALSE(tt_kind_is_single_line(TT_KIND_SUBROUTINE));
+}
+
+TT_TEST(test_symbol_kind_filter_matches)
+{
+    TT_ASSERT_TRUE(tt_kind_filter_matches("function", "function"));
+    TT_ASSERT_TRUE(tt_kind_filter_matches("Function", "subroutine"));
+    TT_ASSERT_TRUE(tt_kind_filter_matches("subroutine", "subroutine"));
+    TT_ASSERT_FALSE(tt_kind_filter_matches("subroutine", "function"));
+    TT_ASSERT_FALSE(tt_kind_filter_matches("method", "subroutine"));
+    TT_ASSERT_FALSE(tt_kind_filter_matches(NULL, "function"));
+}
+
+TT_TEST(test_symbol_kind_count_is_16)
+{
+    TT_ASSERT_EQ_INT(16, TT_KIND_COUNT);
 }
 
 void run_symbol_kind_tests(void)
@@ -203,5 +223,7 @@ void run_symbol_kind_tests(void)
     TT_RUN(test_symbol_kind_doc_labels);
     TT_RUN(test_symbol_kind_doc_kinds_are_multiline);
     TT_RUN(test_symbol_kind_doc_kinds_are_valid);
-    TT_RUN(test_symbol_kind_count_is_15);
+    TT_RUN(test_symbol_kind_subroutine);
+    TT_RUN(test_symbol_kind_filter_matches);
+    TT_RUN(test_symbol_kind_count_is_16);
 }

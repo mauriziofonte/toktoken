@@ -51,6 +51,8 @@ static const ext_map_entry_t EXT_MAP[] = {
     {"lua", "lua"},
     {"pl", "perl"},
     {"pm", "perl"},
+    {"cgi", "perl"},  /* shebang refines it at index time (parser_perl) */
+    {"psgi", "perl"},
     {"sh", "bash"},
     {"bash", "bash"},
     {"zsh", "bash"},

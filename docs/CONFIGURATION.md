@@ -76,7 +76,9 @@ Gitignore-style glob patterns. Added to the default ignore list (which includes 
 
 ### languages
 
-When non-empty, only files matching these languages are indexed. Language names are lowercase.
+When non-empty, only files matching these languages are indexed. Language names are lowercase. The CLI flag `--languages` (comma-separated) takes precedence over this key.
+
+When empty and `--full` is not given, a project whose code files are at least 50% Perl is indexed with the Perl profile (`perl`, `javascript`, `bash`, `markdown`). `index:create` / `index:update` report the applied focus as `language_focus`.
 
 ```json
 {

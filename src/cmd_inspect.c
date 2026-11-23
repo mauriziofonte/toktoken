@@ -110,7 +110,7 @@ static bool kind_matches(const char *kind_str, const char **kinds, int kind_coun
         return true;
     for (int i = 0; i < kind_count; i++)
     {
-        if (tt_strcasecmp(kind_str, kinds[i]) == 0)
+        if (tt_kind_filter_matches(kinds[i], kind_str))
             return true;
     }
     return false;
@@ -297,7 +297,7 @@ cJSON *tt_cmd_inspect_outline_exec(tt_cli_opts_t *opts)
         cJSON *err = make_error("invalid_kind", "Unknown kind filter value.",
                                 "Valid kinds: class, interface, trait, enum, function, "
                                 "method, constant, property, variable, namespace, type, "
-                                "directive, chapter, section, subsection");
+                                "directive, chapter, section, subsection, subroutine");
         cJSON_AddStringToObject(err, "invalid_value", invalid_kind);
         free(invalid_kind);
         free(project_path);
@@ -494,6 +494,9 @@ cJSON *tt_cmd_inspect_outline_exec(tt_cli_opts_t *opts)
         cJSON_AddStringToObject(result, "file", file_path);
         if (file_rec.language && file_rec.language[0])
             cJSON_AddStringToObject(result, "lang", file_rec.language);
+        cJSON *entry = tt_file_flags_json(file_rec.flags);
+        if (entry)
+            cJSON_AddItemToObject(result, "entry", entry);
         cJSON_AddItemToObject(result, "symbols", roots);
 
         outline_nodes_free(nodes, fcount);
@@ -993,6 +996,9 @@ cJSON *tt_cmd_inspect_file_exec(tt_cli_opts_t *opts)
     cJSON_AddStringToObject(result, "file", file_path);
     if (file_rec.language && file_rec.language[0])
         cJSON_AddStringToObject(result, "lang", file_rec.language);
+    cJSON *entry = tt_file_flags_json(file_rec.flags);
+    if (entry)
+        cJSON_AddItemToObject(result, "entry", entry);
     cJSON_AddNumberToObject(result, "total_lines", total_lines);
 
     cJSON *range = cJSON_CreateArray();

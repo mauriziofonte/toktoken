@@ -5,6 +5,7 @@
  */
 
 #include "mcp_server.h"
+#include "cmd_index.h"
 #include "mcp_tools.h"
 #include "mcp_log.h"
 #include "version.h"
@@ -732,6 +733,21 @@ static cJSON *mcp_handle_tools_call(tt_mcp_server_t *srv,
 
     /* Measure execution time */
     uint64_t start_ms = tt_monotonic_ms();
+
+    /* Rebuild indexes written with an older index format before querying. */
+    if (strncmp(name, "index_", 6) != 0 && strcmp(name, "cache_clear") != 0 &&
+        strcmp(name, "codebase_detect") != 0 && strcmp(name, "help") != 0 &&
+        strcmp(name, "projects_list") != 0)
+    {
+        const char *path = arguments ? cJSON_GetStringValue(
+                                           cJSON_GetObjectItemCaseSensitive(arguments, "path"))
+                                     : NULL;
+        if (tt_index_ensure_format(path ? path : srv->project_root) > 0)
+        {
+            srv->stale_check_ms = 0;
+            srv->stale_cached = false;
+        }
+    }
 
     /* Execute the tool */
     cJSON *tool_result = tool->execute(srv, arguments);

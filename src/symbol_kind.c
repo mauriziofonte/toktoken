@@ -24,7 +24,8 @@ static const char *KIND_STRINGS[TT_KIND_COUNT] = {
     "directive",
     "chapter",
     "section",
-    "subsection"};
+    "subsection",
+    "subroutine"};
 
 /* Human-readable labels (indexed by tt_symbol_kind_e). */
 static const char *KIND_LABELS[TT_KIND_COUNT] = {
@@ -42,7 +43,8 @@ static const char *KIND_LABELS[TT_KIND_COUNT] = {
     "Directive",
     "Chapter",
     "Section",
-    "Subsection"};
+    "Subsection",
+    "Subroutine"};
 
 /* CTAGS_MAP: 35 entries (15 identity + 20 aliases). */
 typedef struct
@@ -158,4 +160,13 @@ bool tt_kind_is_single_line(tt_symbol_kind_e kind)
     default:
         return false;
     }
+}
+
+bool tt_kind_filter_matches(const char *filter, const char *kind)
+{
+    if (!filter || !kind)
+        return false;
+    if (tt_strcasecmp(filter, kind) == 0)
+        return true;
+    return tt_strcasecmp(filter, "function") == 0 && tt_strcasecmp(kind, "subroutine") == 0;
 }

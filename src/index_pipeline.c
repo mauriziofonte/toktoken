@@ -57,6 +57,7 @@
 #include "parser_autohotkey.h"
 #include "parser_openapi.h"
 #include "parser_twig.h"
+#include "parser_perl.h"
 
 #include <yyjson.h>
 
@@ -150,6 +151,9 @@ static void batch_free(tt_symbol_batch_t *b)
         tt_symbol_array_free(b->symbols, b->symbol_count);
     if (b->imports)
         tt_import_array_free(b->imports, b->import_count);
+    if (b->sites)
+        tt_site_array_free(b->sites, b->site_count);
+    free(b->file_flags);
     for (int i = 0; i < b->file_count; i++)
     {
         free(b->file_paths[i]);
@@ -176,12 +180,16 @@ typedef struct
     tt_import_t *imports;
     int imp_count;
     int imp_cap;
+    tt_site_t *sites;
+    int site_count;
+    int site_cap;
     char **file_paths;
     char **file_hashes;
     char **file_languages;
     int64_t *file_sizes;
     int64_t *file_mtimes_sec;
     int64_t *file_mtimes_nsec;
+    int *file_flags;
     int file_count;
     int file_cap;
 } local_batch_t;
@@ -200,10 +208,12 @@ static int local_batch_init(local_batch_t *lb)
     lb->file_sizes = malloc((size_t)lb->file_cap * sizeof(int64_t));
     lb->file_mtimes_sec = malloc((size_t)lb->file_cap * sizeof(int64_t));
     lb->file_mtimes_nsec = malloc((size_t)lb->file_cap * sizeof(int64_t));
+    lb->file_flags = malloc((size_t)lb->file_cap * sizeof(int));
     if (!lb->symbols || !lb->imports || !lb->file_paths || !lb->file_hashes ||
         !lb->file_languages || !lb->file_sizes || !lb->file_mtimes_sec ||
-        !lb->file_mtimes_nsec)
+        !lb->file_mtimes_nsec || !lb->file_flags)
     {
+        free(lb->file_flags);
         free(lb->symbols);
         free(lb->imports);
         free(lb->file_paths);
@@ -221,7 +231,7 @@ static int local_batch_init(local_batch_t *lb)
 static void local_batch_add_file(local_batch_t *lb, const char *path,
                                  const char *hash, const char *language,
                                  int64_t size, int64_t mtime_sec,
-                                 int64_t mtime_nsec)
+                                 int64_t mtime_nsec, int flags)
 {
     if (lb->file_count >= lb->file_cap)
     {
@@ -251,6 +261,10 @@ static void local_batch_add_file(local_batch_t *lb, const char *path,
         if (!tn)
             return;
         lb->file_mtimes_nsec = tn;
+        int *tf = realloc(lb->file_flags, nc * sizeof(int));
+        if (!tf)
+            return;
+        lb->file_flags = tf;
         lb->file_cap = new_cap;
     }
     lb->file_paths[lb->file_count] = tt_strdup(path);
@@ -259,6 +273,7 @@ static void local_batch_add_file(local_batch_t *lb, const char *path,
     lb->file_sizes[lb->file_count] = size;
     lb->file_mtimes_sec[lb->file_count] = mtime_sec;
     lb->file_mtimes_nsec[lb->file_count] = mtime_nsec;
+    lb->file_flags[lb->file_count] = flags;
     lb->file_count++;
 }
 
@@ -273,6 +288,9 @@ static tt_symbol_batch_t *local_batch_flush(local_batch_t *lb)
     b->symbol_count = lb->sym_count;
     b->imports = lb->imports;
     b->import_count = lb->imp_count;
+    b->sites = lb->sites;
+    b->site_count = lb->site_count;
+    b->file_flags = lb->file_flags;
     b->file_paths = lb->file_paths;
     b->file_hashes = lb->file_hashes;
     b->file_languages = lb->file_languages;
@@ -307,6 +325,9 @@ static void local_batch_destroy(local_batch_t *lb)
         else
             free(lb->imports);
     }
+    if (lb->sites)
+        tt_site_array_free(lb->sites, lb->site_count);
+    free(lb->file_flags);
     for (int i = 0; i < lb->file_count; i++)
     {
         free(lb->file_paths[i]);
@@ -796,7 +817,7 @@ static int build_symbols_for_group(const char *project_root,
                          lang ? lang : "",
                          (int64_t)st.st_size,
                          TT_ST_MTIME_SEC(st),
-                         TT_ST_MTIME_NSEC(st));
+                         TT_ST_MTIME_NSEC(st), 0);
 
     /* Binary content check: null bytes in first 8KB -- skip symbols */
     {
@@ -1236,6 +1257,161 @@ static void merge_custom_parser(const char *project_root,
         extract_js_constants(project_root, rel_path, lb);
 }
 
+/* ===== Perl files (custom parser, no ctags) ===== */
+
+/* Move all elements of a parser result into the local batch. */
+static void local_batch_take_perl(local_batch_t *lb, tt_perl_result_t *r)
+{
+    if (r->sym_count > 0)
+    {
+        int needed = lb->sym_count + r->sym_count;
+        if (needed > lb->sym_cap)
+        {
+            int nc = needed * 2;
+            tt_symbol_t *tmp = realloc(lb->symbols, (size_t)nc * sizeof(tt_symbol_t));
+            if (tmp)
+            {
+                lb->symbols = tmp;
+                lb->sym_cap = nc;
+            }
+        }
+        if (needed <= lb->sym_cap)
+        {
+            memcpy(&lb->symbols[lb->sym_count], r->symbols,
+                   (size_t)r->sym_count * sizeof(tt_symbol_t));
+            lb->sym_count = needed;
+            free(r->symbols);
+        }
+        else
+        {
+            tt_symbol_array_free(r->symbols, r->sym_count);
+        }
+        r->symbols = NULL;
+        r->sym_count = 0;
+    }
+    if (r->imp_count > 0)
+    {
+        int needed = lb->imp_count + r->imp_count;
+        if (needed > lb->imp_cap)
+        {
+            int nc = needed * 2;
+            tt_import_t *tmp = realloc(lb->imports, (size_t)nc * sizeof(tt_import_t));
+            if (tmp)
+            {
+                lb->imports = tmp;
+                lb->imp_cap = nc;
+            }
+        }
+        if (needed <= lb->imp_cap)
+        {
+            memcpy(&lb->imports[lb->imp_count], r->imports,
+                   (size_t)r->imp_count * sizeof(tt_import_t));
+            lb->imp_count = needed;
+            free(r->imports);
+        }
+        else
+        {
+            tt_import_array_free(r->imports, r->imp_count);
+        }
+        r->imports = NULL;
+        r->imp_count = 0;
+    }
+    if (r->site_count > 0)
+    {
+        int needed = lb->site_count + r->site_count;
+        if (needed > lb->site_cap)
+        {
+            int nc = needed * 2;
+            tt_site_t *tmp = realloc(lb->sites, (size_t)nc * sizeof(tt_site_t));
+            if (tmp)
+            {
+                lb->sites = tmp;
+                lb->site_cap = nc;
+            }
+        }
+        if (needed <= lb->site_cap)
+        {
+            memcpy(&lb->sites[lb->site_count], r->sites,
+                   (size_t)r->site_count * sizeof(tt_site_t));
+            lb->site_count = needed;
+            free(r->sites);
+        }
+        else
+        {
+            tt_site_array_free(r->sites, r->site_count);
+        }
+        r->sites = NULL;
+        r->site_count = 0;
+    }
+    tt_perl_result_free(r);
+}
+
+/* Index one Perl file (.pl .pm .cgi .psgi). Always inserts a file record.
+ * A .cgi whose shebang names another interpreter keeps that language and
+ * gets no symbols. Returns the number of symbols added. */
+static int process_perl_file(const char *project_root, const char *rel_path,
+                             local_batch_t *lb, int max_file_size_bytes)
+{
+    char *full_path = tt_path_join(project_root, rel_path);
+    if (!full_path)
+        return 0;
+    struct stat st;
+    if (stat(full_path, &st) != 0)
+    {
+        free(full_path);
+        return 0;
+    }
+    size_t content_len = 0;
+    char *content = tt_read_file(full_path, &content_len);
+    free(full_path);
+    if (!content)
+        return 0;
+
+    char *file_hash = tt_fast_hash_hex(content, content_len);
+    if (!file_hash)
+        file_hash = tt_strdup("");
+
+    const char *lang = "perl";
+    const char *shebang = tt_perl_shebang_language(content, content_len);
+    if (shebang && strcmp(shebang, "perl") != 0 && strcmp(shebang, "unknown") != 0)
+        lang = shebang;
+
+    bool is_binary = false;
+    size_t check_len = content_len < 8192 ? content_len : 8192;
+    for (size_t j = 0; j < check_len; j++)
+    {
+        if (content[j] == '\0')
+        {
+            is_binary = true;
+            break;
+        }
+    }
+    bool oversize = (max_file_size_bytes > 0 && st.st_size > max_file_size_bytes);
+
+    int flags = 0;
+    int before = lb->sym_count;
+    if (!is_binary && !oversize && strcmp(lang, "perl") == 0)
+    {
+        tt_perl_result_t r;
+        memset(&r, 0, sizeof(r));
+        if (tt_parse_perl_content(rel_path, content, content_len, &r) == 0)
+        {
+            flags = r.file_flags;
+            local_batch_take_perl(lb, &r);
+        }
+        else
+        {
+            tt_perl_result_free(&r);
+        }
+    }
+
+    local_batch_add_file(lb, rel_path, file_hash, lang, (int64_t)st.st_size,
+                         TT_ST_MTIME_SEC(st), TT_ST_MTIME_NSEC(st), flags);
+    free(content);
+    free(file_hash);
+    return lb->sym_count - before;
+}
+
 /* ===== Enqueue a batch ===== */
 
 static bool enqueue_batch(tt_symbol_batch_t *batch, worker_ctx_t *ctx)
@@ -1267,16 +1443,70 @@ static void worker_fn(void *arg)
         return;
     }
 
+    /* 0. Perl files bypass ctags: the custom parser yields full bodies,
+     *    imports and security sites. */
+    bool *is_perl = calloc((size_t)(ctx->file_count > 0 ? ctx->file_count : 1), sizeof(bool));
+    int ctags_files = 0;
+    for (int i = 0; i < ctx->file_count; i++)
+    {
+        if (tt_interrupted || atomic_load(ctx->error_flag))
+            break;
+        if (is_perl && tt_perl_is_perl_path(ctx->file_paths[i]))
+        {
+            is_perl[i] = true;
+            int added = process_perl_file(ctx->project_root, ctx->file_paths[i], &lb,
+                                          ctx->max_file_size_bytes);
+            if (ctx->progress)
+            {
+                atomic_fetch_add(&ctx->progress->files_indexed, 1);
+                atomic_fetch_add(&ctx->progress->symbols_indexed, added);
+            }
+            if (lb.sym_count >= BATCH_SYMBOL_THRESHOLD || lb.site_count >= 4 * BATCH_SYMBOL_THRESHOLD)
+            {
+                tt_symbol_batch_t *batch = local_batch_flush(&lb);
+                if (batch)
+                    enqueue_batch(batch, ctx);
+            }
+            continue;
+        }
+        ctags_files++;
+    }
+
     /* 1. Write chunk paths to temp file */
     tt_strbuf_t file_list;
     tt_strbuf_init(&file_list);
+    bool first_path = true;
     for (int i = 0; i < ctx->file_count; i++)
     {
-        if (i > 0)
+        if (is_perl && is_perl[i])
+            continue;
+        if (!first_path)
             tt_strbuf_append_char(&file_list, '\n');
+        first_path = false;
         tt_strbuf_append_str(&file_list, ctx->project_root);
         tt_strbuf_append_char(&file_list, '/');
         tt_strbuf_append_str(&file_list, ctx->file_paths[i]);
+    }
+
+    if (ctags_files == 0)
+    {
+        /* Nothing for ctags: flush and signal completion. */
+        tt_strbuf_free(&file_list);
+        free(is_perl);
+        if (lb.sym_count > 0 || lb.file_count > 0 || lb.site_count > 0)
+        {
+            tt_symbol_batch_t *batch = local_batch_flush(&lb);
+            if (batch)
+                enqueue_batch(batch, ctx);
+        }
+        tt_symbol_batch_t *sentinel = batch_alloc();
+        if (sentinel)
+        {
+            sentinel->is_sentinel = true;
+            enqueue_batch(sentinel, ctx);
+        }
+        local_batch_destroy(&lb);
+        return;
     }
 
     char prefix[32];
@@ -1295,6 +1525,7 @@ static void worker_fn(void *arg)
             sentinel->error_msg = tt_strdup("failed to create temp chunk file");
             enqueue_batch(sentinel, ctx);
         }
+        free(is_perl);
         local_batch_destroy(&lb);
         return;
     }
@@ -1315,6 +1546,7 @@ static void worker_fn(void *arg)
             sentinel->error_msg = tt_strdup("failed to start ctags stream");
             enqueue_batch(sentinel, ctx);
         }
+        free(is_perl);
         local_batch_destroy(&lb);
         return;
     }
@@ -1502,7 +1734,7 @@ static void worker_fn(void *arg)
     {
         for (int i = 0; i < ctx->file_count; i++)
         {
-            if (file_seen[i])
+            if (file_seen[i] || (is_perl && is_perl[i]))
                 continue;
 
             const char *rel = ctx->file_paths[i];
@@ -1576,7 +1808,7 @@ static void worker_fn(void *arg)
                                  lang ? lang : "",
                                  (int64_t)st.st_size,
                                  TT_ST_MTIME_SEC(st),
-                                 TT_ST_MTIME_NSEC(st));
+                                 TT_ST_MTIME_NSEC(st), 0);
             free(content);
             free(file_hash);
 
@@ -1586,10 +1818,11 @@ static void worker_fn(void *arg)
     }
 
     free(file_seen);
+    free(is_perl);
     tt_hashmap_free(path_to_idx);
 
     /* Flush remaining symbols */
-    if (lb.sym_count > 0 || lb.file_count > 0)
+    if (lb.sym_count > 0 || lb.file_count > 0 || lb.site_count > 0)
     {
         tt_symbol_batch_t *batch = local_batch_flush(&lb);
         if (batch)
@@ -1724,14 +1957,15 @@ static void writer_fn(void *arg)
         /* Insert files */
         for (int i = 0; i < batch->file_count; i++)
         {
-            tt_store_insert_file(ctx->store,
-                                 batch->file_paths[i],
-                                 batch->file_hashes[i],
-                                 batch->file_languages[i],
-                                 batch->file_sizes[i],
-                                 batch->file_mtimes_sec[i],
-                                 batch->file_mtimes_nsec[i],
-                                 "");
+            tt_store_insert_file_ex(ctx->store,
+                                    batch->file_paths[i],
+                                    batch->file_hashes[i],
+                                    batch->file_languages[i],
+                                    batch->file_sizes[i],
+                                    batch->file_mtimes_sec[i],
+                                    batch->file_mtimes_nsec[i],
+                                    "",
+                                    batch->file_flags ? batch->file_flags[i] : 0);
             rows_in_transaction++;
         }
         ctx->files_written += batch->file_count;
@@ -1750,6 +1984,13 @@ static void writer_fn(void *arg)
             tt_store_insert_imports(ctx->store, batch->imports, batch->import_count);
             rows_in_transaction += batch->import_count;
             ctx->imports_written += batch->import_count;
+        }
+
+        /* Insert security sites */
+        if (batch->site_count > 0)
+        {
+            tt_store_insert_sites(ctx->store, batch->sites, batch->site_count);
+            rows_in_transaction += batch->site_count;
         }
 
         /* Periodic commit */

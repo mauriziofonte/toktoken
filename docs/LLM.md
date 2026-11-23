@@ -142,7 +142,7 @@ TokToken supports two integration modes:
 
 ### 3.1 MCP server configuration
 
-TokToken runs as a local stdio MCP server. It exposes 27 tools via JSON-RPC 2.0 on stdin/stdout. Find your agent below and follow the linked setup guide:
+TokToken runs as a local stdio MCP server. It exposes 32 tools via JSON-RPC 2.0 on stdin/stdout. Find your agent below and follow the linked setup guide:
 
 | Agent | Config format | Config file | Setup guide |
 | ----- | ------------- | ----------- | ----------- |
@@ -211,7 +211,7 @@ toktoken index:update
 
 | Tool | Description |
 | ---- | ----------- |
-| `codebase_detect` | Detect if a directory contains indexable source code |
+| `codebase_detect` | Detect if a directory contains indexable source code. Returns `primary`/`secondary` languages (file census excluding tests, vendored and data files), ordered `ecosystems`, and the `manifests` found |
 | `index_create` | Create a full symbol index. Markdown files are always indexed (documentation kinds: chapter, section, subsection). Pass `full: true` to also include CSS, HTML, YAML, etc. Pass `include: ["vendor"]` to selectively include normally-skipped directories. |
 | `index_update` | Incrementally update the index. Pass `full: true` to include all file types. Pass `include: ["vendor"]` to selectively include normally-skipped directories. |
 | `index_github` | Clone and index a GitHub repository |
@@ -237,6 +237,11 @@ toktoken index:update
 | `find_dead` | Find unreferenced symbols (dead/unreferenced classification, confidence levels) |
 | `index_file` | Reindex a single file without rebuilding the full index |
 | `suggest` | Onboarding discovery: top keywords, kind/language distribution, most-imported files, example queries |
+| `security_sinks` | Perl/CGI command execution, file writes, `eval STRING`: file:line, enclosing sub, argument text, origins (`taint`), params, sanitizer hint, CGI entry flags |
+| `security_sources` | Perl/CGI inputs: `$in{}`, `%ENV`, `@ARGV`, `<STDIN>`, `$config{}`, `read_file*` |
+| `security_sanitizers` | Escaping/validation calls (`quotemeta`, `quote_escape`, `html_escape`, `urlize`, `is_under_directory`, `allowed_*`, `can_*`) |
+| `security_acl_gates` | Access-control gates (`get_module_acl`, `$access{}`, `foreign_available`, `can_use_module`, `allowed_auth_file`, `check_allowed_path`) |
+| `security_flow` | Source -> sink chains across subroutine calls and files (taint-lite reachability, `depth` hops), unresolvable tainted calls as `unknown` |
 | `help` | Get usage details for a TokToken tool, or list all tools |
 
 ### CLI command reference
@@ -261,10 +266,10 @@ toktoken search:symbols "handler" --scope-importers-of src/Events/Dispatcher.php
 
 | Flag | Description |
 | ---- | ----------- |
-| `--kind <list>` | Comma-separated. Code: class, method, function, property, variable, interface, trait, constant, enum, namespace, type, directive. Documentation: chapter, section, subsection |
+| `--kind <list>` | Comma-separated. Code: class, method, function, property, variable, interface, trait, constant, enum, namespace, type, directive, subroutine (Perl, Fortran). Documentation: chapter, section, subsection. `function` also matches `subroutine` |
 | `--unique` | Deduplicate by file:line:name |
 | `--sort <field>` | score (default), name, file, line, kind |
-| `--count` | Return count only |
+| `--count` | Return count only. Identifier queries add `definitions` (exact-name symbols) and, on Perl indexes, `references` / `reference_files` (call sites) |
 | `--no-sig` | Omit signatures |
 | `--no-summary` | Omit summaries |
 | `--filter <pat>` | Include files matching substring (pipe-separated OR) |
@@ -364,7 +369,12 @@ toktoken inspect:tree --depth 2
 | `search:similar <id>` | Find symbols similar to a given one |
 | `inspect:dependencies <file>` | Trace transitive import graph. Use `--depth N` (default 3, max 10) |
 | `inspect:hierarchy <file>` | Show class/function hierarchy with parent-child relationships |
-| `codebase:detect [path]` | Detect if directory is a codebase |
+| `codebase:detect [path]` | Detect if directory is a codebase (language census, ordered ecosystems, manifests) |
+| `security:sinks [scope]` | Perl/CGI sinks. Filters: `--kind` names/classes, `--taint in,env,argv,config,file,stdin,param,any`, `--unsanitized`, `--entry cgi\|unauth\|script`, `--count` (per-name totals) |
+| `security:sources [scope]` | Perl/CGI sources (`--kind in,ENV,ARGV,config,read_file,STDIN`) |
+| `security:sanitizers [scope]` | Sanitizer calls |
+| `security:acl-gates [scope]` | ACL gates |
+| `security:flow [scope]` | Source -> sink chains: `--taint` sources to follow, `--kind` sinks to reach, `--depth N` (default 3, max 6), `--entry`, `--unsanitized`, `--count` (per-sink totals) |
 | `projects:list` | List all indexed projects |
 | `cache:clear` | Delete the index database |
 | `help [command]` | List all tools or show detailed usage for a specific tool |
@@ -612,6 +622,32 @@ Find import cycles before they cause runtime issues or make refactoring impossib
    --> these are the files that will need to be updated.
 ```
 
+### "I need to audit a Perl/CGI application for command injection"
+
+Security queries work on sites recorded by the Perl parser (`.pl`, `.pm`, `.cgi`, `.psgi`). Nothing is executed. Start from entry points, then follow chains.
+
+```text
+1. toktoken stats
+   --> entry_points: how many CGI scripts, how many reachable before authentication.
+
+2. toktoken security:flow --entry unauth --taint in,env -c
+   --> Chains from unauthenticated CGIs: [source, call..., sink] with file:line per step.
+
+3. toktoken security:sinks cron --kind command --taint in --unsanitized
+   --> Command sinks in one module whose argument carries request data with no sanitizer.
+
+4. toktoken inspect:symbol "cron/cron-lib.pl::create_cron_job#subroutine"
+   --> Read the sub that holds the sink (Perl subs use the #subroutine kind).
+
+5. toktoken security:acl-gates cron/save_cron.cgi
+   --> Which access checks run before the sink ($access{}, can_*, get_module_acl).
+
+6. toktoken search:symbols system_logged -n
+   --> definitions vs references: one definition, how many call sites.
+```
+
+**Key principle:** flows are candidates, not proofs. Masks are flow-insensitive and field-insensitive, and callees are resolved heuristically (same file, then import closure, then Webmin module, then unique name). `sanitized: true` only says that a sanitizer call appears in the chain's arguments. Entries under `unknown` are tainted calls whose target could not be resolved (CPAN modules, dynamic calls): review them by hand.
+
 ### "I need to navigate documentation structure (headings, sections)"
 
 Markdown files (`.md`, `.markdown`, `.mdx`) are indexed by default. Headings become
@@ -627,14 +663,14 @@ symbols: chapter (H1), section (H2), subsection (H3-H6).
 
 Documentation kinds are separate from code kinds:
 
-- Code: class, method, function, property, variable, interface, trait, constant, enum, namespace, type, directive
+- Code: class, method, function, property, variable, interface, trait, constant, enum, namespace, type, directive, subroutine
 - Documentation: chapter, section, subsection
 
 ---
 
 ## Configuration
 
-> **Schema version:** The index database is schema v4. v4 adds a `file_centrality` table that boosts search ranking for high-import files. Indexes created with older versions are automatically migrated on the first `index:update`.
+> **Schema version:** The index database is schema v5. v4 added a `file_centrality` table that boosts search ranking for high-import files; v5 adds entry-point flags on files, line/dynamic/confidence on imports and the `sites` table used by the security queries. Indexes created with older versions are migrated automatically; when the content format changes (`index_format`), the index is rebuilt on first use so symbol IDs stay consistent.
 
 ### Project config: `.toktoken.json`
 
@@ -657,6 +693,8 @@ Place in the project root to customize indexing behavior:
 ```
 
 Set `"smart_filter": false` to index all file types including CSS, HTML, and vendored subdirectories. Alternatively, use `"include_dirs": ["vendor"]` to selectively include only specific skipped directories without disabling the entire smart filter. Note: Markdown files are always indexed regardless of the smart filter setting.
+
+`languages` (CLI: `--languages c,python`) restricts indexing to those languages. Without it, a project whose code files are at least 50% Perl is indexed with the Perl profile (perl, javascript, bash, markdown): bundled `vendor_perl/` modules, stray `.py`/`.c` files and translation data such as `module.info.pl` are left out. `full: true` disables the profile; the output reports what was applied under `language_focus`.
 
 Global config at `~/.toktoken.json` supports all sections (`index`, `logging`). Project config only supports `index`.
 

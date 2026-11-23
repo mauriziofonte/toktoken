@@ -10,6 +10,7 @@
 #include "json_output.h"
 #include "version.h"
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -26,12 +27,22 @@ static char *normalize_to_mcp(const char *name, char *buf, size_t len)
     return buf;
 }
 
-/* Convert MCP name to CLI name. Writes into buf. Returns buf. */
+/* Convert MCP name to CLI name: first '_' -> ':', later ones -> '-'
+ * (security_acl_gates -> security:acl-gates). Writes into buf. Returns buf. */
 static char *mcp_to_cli(const char *mcp_name, char *buf, size_t len)
 {
     size_t i;
+    bool seen = false;
     for (i = 0; i < len && mcp_name[i]; i++)
-        buf[i] = (mcp_name[i] == '_') ? ':' : mcp_name[i];
+    {
+        if (mcp_name[i] == '_')
+        {
+            buf[i] = seen ? '-' : ':';
+            seen = true;
+        }
+        else
+            buf[i] = mcp_name[i];
+    }
     buf[i] = '\0';
     return buf;
 }

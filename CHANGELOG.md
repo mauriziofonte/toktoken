@@ -5,7 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.0] (unreleased) - 2026-03-26
+## [0.6.0] - 2026-11-23
+
+### Added
+
+- **Perl parser** (`parser_perl.c`) replacing ctags for `.pl`, `.pm`, `.cgi`, `.psgi`: lexer-level handling of POD, heredocs (`<<EOF`, `<<'EOF'`, `<<~EOF`), quote-like operators with any delimiter (`q{}`, `qr{}`, `s{}{}`), strings, comments and `__END__`/`__DATA__`, so subroutine bodies are brace-matched correctly. Subroutines get the new `subroutine` kind (`method` in classes), full body spans, signatures from `my (...) = @_` (never invented) and POD docstrings taken from the heading that names them. `.cgi` files are now indexed (shebang decides the language).
+- **Perl imports**: `require`, `do`, `use`, `use lib`, `push @INC`, Webmin `foreign_require`/`foreign_call`/`remote_*` (dynamic edges with confidence) and computed `do $script` when the variable is assigned string literals. Imports now carry `line`, `dynamic` and `confidence`; `find:importers` shows them and is deterministic.
+- **Security queries** (CLI + MCP): `security:sinks`, `security:sources`, `security:sanitizers`, `security:acl-gates`, `security:flow` (`security_*` MCP tools, 32 tools in total). Scope by directory/file/glob, `--kind`, `--taint`, `--unsanitized`, `--entry cgi|unauth|script`, `--limit`, `--token-budget`, `--count`, `--compact`; `security:flow` follows sources into user subroutines across files up to `--depth` hops and lists unresolvable tainted calls as `unknown`.
+- **Entry-point flags**: files are flagged as CGI, unauthenticated (from Webmin `unauthcgi` defaults) or script. Shown by `inspect:outline`, `inspect:file` (`entry`), `stats` (`entry_points`) and on every security entry.
+- **`search:symbols` definitions vs references**: identifier queries report `definitions` (exact-name symbols) and, on Perl indexes, `references`/`reference_files` (distinct call sites); results mark `definition: true`.
+- **`codebase:detect` language census**: `primary`, `secondary`, `languages` (files per language, tests/vendored/data excluded, bounded walk honoring `.gitignore`), `ecosystems` ordered by the census, and the `manifests` found kept in their own field. Perl manifests: `Makefile.PL`, `Build.PL`, `cpanfile`, `META.json`, `META.yml`, `dist.ini`.
+- **Perl language profile**: when Perl is at least 50% of the code files and neither `--languages` nor `--full` is given, indexing keeps perl, javascript, bash and markdown; reported as `language_focus`. `vendor_perl/` is a skipped directory, and key=value translation files behind `.pl`/`.sv`/`.v` are skipped by the smart filter.
+- **Index format versioning**: metadata `index_format`; indexes written with an older content format are rebuilt automatically before the first query (CLI and MCP) or by `index:update`.
+- Acceptance script `tests/acceptance/webmin.sh` (A1-A10 on a Webmin checkout, isolated HOME).
+
+### Changed
+
+- **Schema v5**: `files.flags`, `imports.line/dynamic/confidence`, `sites` table (with indexes). Older databases are migrated.
+- **`stats.languages` counts files** (it counted symbols), the same unit as `suggest.language_distribution` and `index:create`'s `languages`. Symbol counts moved to `symbols_by_language`; `units` documents each field.
+- **`--kind function` also matches `subroutine`** (search:symbols, inspect:outline, find:dead). `--kind subroutine` is strict.
+- **`find:dead`** treats symbols named by recorded call sites as referenced (Perl).
+- **`search:text --regex`** uses POSIX extended regex in-process (grep -E semantics); ripgrep only where `regex.h` is missing. `--max` hard cap raised from 500 to 20000 (default 100).
+- **`help`** CLI names: `security_acl_gates` -> `security:acl-gates` (first underscore becomes `:`, later ones `-`).
+- Ctags `subroutine` kinds (Fortran) map to `subroutine` instead of `variable`.
+
+### Fixed
+
+- **`--languages` was parsed but ignored**; it now restricts indexing (and takes precedence over the config key).
+- **`search:text --regex` never used ripgrep**: the invocation passed a non-existent `--files-from` flag, so every regex query silently fell back to substring matching and returned 0 results.
+- `codebase:detect` reported only the first manifest found in an arbitrary subdirectory (e.g. `c/cpp` for a Perl project); manifest scanning is now sorted and deterministic.
+
+## [0.5.0] - 2026-04-23
 
 ### Fixed
 
@@ -303,6 +333,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Diagnostic mode (`-X`) with structured JSONL output.
 - Cross-platform support: Linux (x86_64, aarch64, armv7), macOS (x86_64, aarch64), Windows (x86_64).
 
+[0.6.0]: https://github.com/mauriziofonte/toktoken/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/mauriziofonte/toktoken/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/mauriziofonte/toktoken/compare/v0.3.0...v0.4.0
 [0.3.5]: https://github.com/mauriziofonte/toktoken/compare/v0.3.0...v0.3.5
 [0.3.0]: https://github.com/mauriziofonte/toktoken/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/mauriziofonte/toktoken/compare/v0.2.0...v0.2.1
